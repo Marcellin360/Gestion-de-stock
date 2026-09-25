@@ -1,0 +1,39 @@
+{
+  "name": "@pharmastock/backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "db:migrate": "node scripts/migrate.mjs",
+    "setup": "node scripts/setup.mjs",
+    "db:create": "node scripts/setup.mjs --db-only",
+    "db:status": "node scripts/migrate.mjs --status",
+    "import:products": "node scripts/import-products.mjs",
+    "admin:create": "node scripts/create-admin.mjs",
+    "demo:seed": "node scripts/seed-demo.mjs",
+    "demo:scenario": "node scripts/seed-demo-scenario.mjs",
+    "test": "node --test test/unit/*.test.js",
+    "test:integration": "node --test --test-concurrency=1 test/integration/*.test.js",
+    "demo:users": "node scripts/seed-demo-users.mjs",
+    "reset:password": "node scripts/reset-password.mjs",
+    "diagnose": "node scripts/diagnose.mjs"
+  },
+  "dependencies": {
+    "express": "4.22.3",
+    "sequelize": "6.37.8",
+    "pg": "8.16.0",
+    "pg-hstore": "2.3.4",
+    "dotenv": "16.5.0",
+    "bcryptjs": "3.0.2",
+    "helmet": "8.1.0",
+    "express-rate-limit": "7.5.0",
+    "cookie-parser": "1.4.7",
+    "decimal.js": "10.5.0",
+    "zod": "3.25.28"
+  },
+  "devDependencies": {
+    "jsdom": "26.1.0"
+  }
+}

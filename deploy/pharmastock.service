@@ -1,0 +1,33 @@
+# Service systemd — PharmaStock (API + interface) pour le poste de l'officine.
+# Installation :
+#   sudo cp deploy/pharmastock.service /etc/systemd/system/pharmastock.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now pharmastock
+[Unit]
+Description=PharmaStock — gestion de stock pour pharmacie
+Documentation=file:/opt/pharmastock/README.md
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/pharmastock/backend
+Environment=NODE_ENV=production
+EnvironmentFile=-/opt/pharmastock/backend/.env
+ExecStart=/usr/bin/node src/server.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pharmastock
+# Durcissement simple : l'application n'a besoin que de son dossier et du réseau local.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/pharmastock /var/backups/pharmastock
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,34 @@
+{
+  "name": "pharmastock",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Gestion de stock pour pharmacie — backend Node/Express/Sequelize/PostgreSQL + frontend React/Vite",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n API,WEB \"npm run dev -w backend\" \"npm run dev -w frontend\"",
+    "build": "npm run build -w frontend",
+    "start": "npm start -w backend",
+    "db:migrate": "npm run db:migrate -w backend",
+    "setup": "node backend/scripts/setup.mjs",
+    "db:create": "node backend/scripts/setup.mjs --db-only",
+    "db:status": "npm run db:status -w backend",
+    "import:products": "node backend/scripts/import-products.mjs",
+    "admin:create": "npm run admin:create -w backend",
+    "reset:password": "npm run reset:password -w backend",
+    "diagnose": "npm run diagnose -w backend",
+    "demo:seed": "npm run demo:seed -w backend",
+    "demo:scenario": "npm run demo:scenario -w backend",
+    "demo:users": "npm run demo:users -w backend",
+    "test": "npm test -w backend",
+    "test:integration": "npm run test:integration -w backend"
+  },
+  "devDependencies": {
+    "concurrently": "9.1.2"
+  },
+  "engines": {
+    "node": ">=20.19 <23"
+  }
+}

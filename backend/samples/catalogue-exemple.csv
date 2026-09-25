@@ -1,0 +1,21 @@
+code;nom;categorie;principe_actif;dosage;forme;presentation;code_barres;laboratoire;unite;seuil_min;seuil_max;conservation;taux_marge
+MED-001;Paracétamol 500 mg;Antalgiques;Paracétamol;500 mg;Comprimé;Boîte de 20;6181234500011;Générique;boîte;20;200;À l'abri de la lumière et de l'humidité;20
+MED-002;Amoxicilline 500 mg;Antibiotiques;Amoxicilline;500 mg;Gélule;Boîte de 20;6181234500028;Générique;boîte;15;150;Température ambiante, au sec;20
+MED-003;Ibuprofène 400 mg;Anti-inflammatoires;Ibuprofène;400 mg;Comprimé;Boîte de 20;6181234500035;Générique;boîte;10;120;À l'abri de la lumière;20
+MED-004;Artéméther-Luméfantrine 20/120;Antipaludiques;Artéméther + Luméfantrine;20/120 mg;Comprimé;Boîte de 6;6181234500042;Générique;boîte;10;80;Au sec, sous 30 °C;20
+MED-005;Mébendazole 100 mg;Antiparasitaires;Mébendazole;100 mg;Comprimé;Boîte de 6;6181234500059;Générique;boîte;10;80;Au sec;20
+MED-006;Cotrimoxazole 480 mg;Antibiotiques;Sulfaméthoxazole + Triméthoprime;480 mg;Comprimé;Boîte de 10;6181234500066;Générique;boîte;10;100;À l'abri de la lumière;20
+MED-007;Vitamine C 500 mg;Vitamines;Acide ascorbique;500 mg;Comprimé effervescent;Tube de 20;6181234500073;Générique;tube;10;100;Tube bien fermé, au sec;22
+MED-008;SRO - Sels de réhydratation;Réhydratation;Chlorure de sodium + Glucose;WHO;Sachet;Sachet unitaire;6181234500080;Générique;sachet;50;500;Au sec;15
+MED-009;Sérum physiologique 0,9 %;Solutions et antiseptiques;Chlorure de sodium;0,9 %;Solution;Flacon de 500 ml;6181234500097;Générique;flacon;10;80;Température ambiante;20
+MED-010;Povidone iodée 10 %;Solutions et antiseptiques;Povidone iodée;10 %;Solution;Flacon de 125 ml;6181234500103;Générique;flacon;8;60;À l'abri de la lumière;20
+MED-011;Metformine 500 mg;Diabète;Metformine;500 mg;Comprimé;Boîte de 30;6181234500110;Générique;boîte;10;100;Au sec;20
+MED-012;Amlodipine 5 mg;Hypertension;Amlodipine;5 mg;Comprimé;Boîte de 30;6181234500127;Générique;boîte;10;100;Au sec;20
+MED-013;Salbutamol spray 100 µg;Asthme;Salbutamol;100 µg/dose;Aérosol;Flacon 200 doses;6181234500134;Générique;flacon;5;30;Ne pas percer, sous 30 °C;25
+MED-014;Fer + Acide folique;Vitamines;Fer + Acide folique;200 mg/0,4 mg;Comprimé;Boîte de 30;6181234500141;Générique;boîte;10;100;Au sec;20
+MED-015;Oméprazole 20 mg;Digestif;Oméprazole;20 mg;Gélule;Boîte de 14;6181234500158;Générique;boîte;8;60;À l'abri de l'humidité;20
+MED-016;Diclofénac 50 mg;Anti-inflammatoires;Diclofénac sodique;50 mg;Comprimé;Boîte de 20;6181234500165;Générique;boîte;10;100;À l'abri de la lumière;20
+MED-017;Zinc 20 mg;Vitamines;Sulfate de zinc;20 mg;Comprimé;Boîte de 10;6181234500172;Générique;boîte;10;80;Au sec;20
+MED-018;Ceftriaxone 1 g injectable;Antibiotiques;Ceftriaxone;1 g;Poudre injectable;Flacon;6181234500189;Générique;flacon;5;40;À l'abri de la lumière, au frais;25
+MED-019;Insuline (stylo) 100 UI/ml;Diabète;Insuline humaine;100 UI/ml;Solution injectable;Stylo;6181234500196;Générique;stylo;3;20;Réfrigérateur 2 à 8 °C, jamais au congélateur;25
+MED-020;Compresses stériles 10 × 10;Pansements;Gaze stérile;-;Compresse;Sachet de 10;6181234500202;Générique;sachet;20;200;À l'abri de l'humidité;30
