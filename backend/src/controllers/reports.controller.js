@@ -15,11 +15,23 @@ export async function list(req, res) {
   }, transaction));
 
   if (format === 'csv') {
+    // 2.7.24 — EXPORT CSV DU DÉPÔT : les quatre colonnes de découpe par prise
+    // Export CSV du DÉPÔT (2.7.24 : découpe retirée ; 2.7.25 : seuil/situation
+    // retirés) : les colonnes « Sorties boîte/plaquette », « Stock final
+    // boîte/plaquette », « Seuil minimum » et « Situation » en sont retirées —
+    // la réserve raisonne « Sorties » et « Stock final » seulement ; le CSV de
+    // la pharmacie, lui, les conserve toutes (pharmacie inchangée).
+    const COLONNES_RETIREES_CSV = ['Sorties boîte', 'Sorties plaquette', 'Stock final boîte', 'Stock final plaquette',
+      'Seuil minimum', 'Situation'];
+    const lignes = type === 'fiche_depot'
+      ? result.rows.map(ligne => Object.fromEntries(
+          Object.entries(ligne).filter(([colonne]) => !COLONNES_RETIREES_CSV.includes(colonne))))
+      : result.rows;
     res.set({
       'Content-Type': 'text/csv; charset=utf-8',
       'Content-Disposition': `attachment; filename="${type}-${from}-${to}.csv"`
     });
-    return res.send(toCsv(result.rows));
+    return res.send(toCsv(lignes));
   }
   const summary = await read(transaction => reportSummary({ from, to }, transaction));
   res.json({ ...result, summary });

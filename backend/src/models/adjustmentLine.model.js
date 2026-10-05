@@ -9,7 +9,9 @@ export const attributes = {
     adjustmentId: {type:DataTypes.INTEGER,allowNull:false},
     productId: {type:DataTypes.INTEGER,allowNull:false},
     lotId: {type:DataTypes.INTEGER,allowNull:false},
-    quantity: {type:DataTypes.INTEGER,allowNull:false},
+    // 2.7.12 — l'écart d'inventaire peut être fractionné (le théorique l'est déjà).
+    quantity: {type:DataTypes.DECIMAL(20,6),allowNull:false,
+      get() { const v = this.getDataValue('quantity'); return v === null ? null : Number(v); }},
     unitCost: {type:DataTypes.DECIMAL(20,6),allowNull:false},
     gapReason: {type:DataTypes.TEXT,allowNull:false,defaultValue:''}
 };

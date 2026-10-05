@@ -1,4 +1,4 @@
-// Compte utilisateur : rôle (droits), activation, réinitialisation du mot de passe.
+// Compte utilisateur : rôle et ses droits, activation, réinitialisation du mot de passe.
 import { useState } from 'react';
 import { users as usersApi } from '../api/endpoints.js';
 import { Btn, Check, ErrorBox, Field, Input, Select, Textarea } from '../components/ui.jsx';
@@ -55,16 +55,18 @@ export default function UserForm({ utilisateur, roles, onDone, onCancel }) {
           </div>
         </Field>
         <Field label="Rôle">
+          {/* 2.7.25 — le nom du rôle seul, sans le nombre de droits entre parenthèses. */}
           <Select value={values.roleId} onChange={e => maj({ roleId: e.target.value })} required>
             {rolesDisponibles.map(role => (
-              <option key={role.id} value={role.id}>{role.name} ({role.permissions.length} droits)</option>
+              <option key={role.id} value={role.id}>{role.name}</option>
             ))}
           </Select>
         </Field>
         <Field label="Téléphone"><Input value={values.phone} onChange={e => maj({ phone: e.target.value })} /></Field>
-        <Field label={utilisateur ? 'Nouveau mot de passe (laisser vide pour conserver)' : 'Mot de passe (12 caractères minimum)'}>
+        {/* 2.7.25 — 4 caractères minimum (chiffres ou lettres) au lieu de 12. */}
+        <Field label={utilisateur ? 'Nouveau mot de passe (laisser vide pour conserver)' : 'Mot de passe (4 caractères minimum)'}>
           <Input type="password" value={values.password} onChange={e => maj({ password: e.target.value })}
-            required={!utilisateur} autoComplete="new-password" minLength={12} />
+            required={!utilisateur} autoComplete="new-password" minLength={4} />
         </Field>
       </div>
 

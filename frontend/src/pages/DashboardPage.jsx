@@ -1,6 +1,29 @@
 // Tableau de bord : ce qui se passe aujourd'hui dans l'officine et ce qui
 // demande une décision (alertes rouges en tête : rupture, péremption, lot bloqué).
-import { AlertTriangle, ShoppingCart, PackagePlus, PackageMinus, ClipboardCheck, ArrowRight, ArrowRightLeft, Warehouse } from 'lucide-react';
+//
+// 2.7.12 — profil PHARMACIE épuré (voalavana n'ilay mpampiasa) :
+//   • l'affichage du DÉPÔT (carte magasin) est retiré : le comptoir ne voit
+//     que la PHARMACIE ;
+//   • le raccourci « Transfert vers la pharmacie » est retiré des actions ;
+//   • la carte « Derniers transferts dépôt → pharmacie » (historique de
+//     transfert / Nouveau transfert) est retirée du tableau de bord.
+// Le profil DÉPÔT, lui, garde tout son tableau de bord inchangé : réceptionner
+// la marchandise et la transférer vers le comptoir est son travail quotidien.
+//
+// 2.7.18 — le CALENDRIER DES VENTES quitte le tableau de bord : il a son propre
+// menu sous « Vente ». Le tableau de bord, lui, affiche désormais un
+// HISTOGRAMME « total encaissé par mois » (12 derniers mois) — la vue d'ensemble
+// que demande le comptoir, sans détail journalier.
+//
+// 2.7.20 — côté DÉPÔT :
+//   • la carte récapitulative des derniers transferts est RETIRÉE du tableau
+//     de bord (l'historique vit dans le menu « Historique de transfert » et le
+//     détail J/J dans le menu « Calendrier des stock ») ;
+//   • un GRAPHIQUE des flux mensuels prend sa place : médicaments entrés vs
+//     sortis chaque mois (12 derniers mois).
+import { AlertTriangle, ShoppingCart, PackagePlus, PackageMinus, ArrowRight, ArrowRightLeft, Warehouse } from 'lucide-react';
+import SalesHistogram from '../components/SalesHistogram.jsx';
+import DepotFlowChart from '../components/DepotFlowChart.jsx';
 import { useData } from '../context/DataContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { Badge, Banner, Btn, Card, Empty, Stat } from '../components/ui.jsx';
@@ -8,18 +31,26 @@ import { navigate } from '../utils/router.js';
 import { expiryLabel, integer, money, LOCATION_SHORT } from '../utils/format.js';
 
 export default function DashboardPage() {
-  const { stats, alerts, lots, products, store, documents, userName } = useData();
+  // 2.7.20 — documents n'est plus exploité ici (carte transferts retirée).
+  const { stats, alerts, lots, products, store, userName } = useData();
   const { can, user } = useAuth();
   // Le profil DÉPÔT ne travaille que sur la réserve : son tableau de bord ne
   // montre QUE le dépôt (aucune valeur, vente ni alerte de la pharmacie).
   const estDepot = user?.roleCode === 'DEPOT';
-  const magasins = (estDepot ? ['DEPOT'] : ['DEPOT', 'PHARMACY']).map(code => ({ code, ...store(code) }));
+  // 2.7.21 — l'ADMINISTRATEUR voit TOUJOURS les choses importantes des DEUX
+  // magasins : la carte Pharmacie garde sa place (2.7.19) et la carte Dépôt
+  // (valeur, médicaments, ruptures) s'y ajoute, ainsi que le graphique des flux.
+  const estAdmin = user?.roleCode === 'ADMIN';
+  // 2.7.12 — profil pharmacie : l'affichage du dépôt est retiré (carte DEPOT
+  // masquée) ; le dépôt, lui, ne montre que sa réserve comme avant.
+  const magasins = (estDepot ? ['DEPOT'] : estAdmin ? ['PHARMACY', 'DEPOT'] : ['PHARMACY'])
+    .map(code => ({ code, ...store(code) }));
   // Indicateurs du haut : ceux du magasin du profil pour le dépôt, globaux sinon.
   const tuiles = estDepot ? (store('DEPOT').stats || {}) : stats;
   // Nombre de références en rupture (alerte de type RUPTURE) — utile au dépôt
   // pour savoir quoi réapprovisionner, sans jamais afficher la pharmacie.
   const rupturesDe = liste => (liste || []).filter(alerte => alerte.type === 'RUPTURE').length;
-  const transfertsRecents = documents.filter(doc => doc.kind === 'TRANSFER').slice(0, 6);
+  // 2.7.20 — plus de carte « derniers transferts » : pas besoin de les retenir.
 
   const rouges = alerts.filter(alert => alert.level === 'red');
   // Une alerte s'affiche toujours par son titre et le médicament concerné.
@@ -28,12 +59,14 @@ export default function DashboardPage() {
   const action = target => ({
     transferts: 'Transférer', lots: 'Voir les lots', losses: 'Sortir en perte', ventes: 'Vendre'
   })[target] || 'Voir';
+  // 2.7.12 — le raccourci « Transfert vers la pharmacie » n'apparaît QUE sur
+  // le tableau de bord du profil dépôt (la pharmacie gère ses ventes ici).
   const actions = [
     can('sale') && { label: 'Nouvelle vente', icon: ShoppingCart, route: 'ventes', variant: 'primary' },
     can('receipt') && { label: 'Réception (dépôt)', icon: PackagePlus, route: 'receptions' },
-    can('transfer') && { label: 'Transfert vers la pharmacie', icon: ArrowRightLeft, route: 'transferts' },
-    can('loss') && { label: 'Perte ou don', icon: PackageMinus, route: 'pertes' },
-    can('inventory') && { label: 'Inventaire', icon: ClipboardCheck, route: 'inventaires' }
+    estDepot && can('transfer') && { label: 'Transfert vers la pharmacie', icon: ArrowRightLeft, route: 'transferts' },
+    can('loss') && { label: 'Perte ou don', icon: PackageMinus, route: 'pertes' }
+    // Raccourci « Inventaire » retiré (2.7.8) : même raison que le menu.
   ].filter(Boolean);
 
   const proches = lots
@@ -48,7 +81,7 @@ export default function DashboardPage() {
           <h1>Bonjour {String(user?.name || '').split(' ')[0]}</h1>
           <small>
             {new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}
-            {estDepot ? ' — état de la réserve (dépôt)' : ' — état du dépôt et de la pharmacie'}
+            {estDepot ? ' — état de la réserve (dépôt)' : estAdmin ? ' — état de la pharmacie (comptoir) et de la réserve (dépôt)' : ' — état de la pharmacie (comptoir)'}
           </small>
         </div>
         <div className="spacer" />
@@ -89,6 +122,9 @@ export default function DashboardPage() {
         )}
       </div>
 
+      {/* 2.7.19 — la carte du magasin (Pharmacie : alertes, valeur du stock,
+          médicaments, ventes du jour) remonte AU-DESSUS de l'histogramme :
+          c'est le métier du comptoir, il se lit en premier. */}
       <div className="grid grid--2" style={{ marginBottom: 16 }}>
         {magasins.map(magasin => (
           <Card key={magasin.code}
@@ -113,8 +149,17 @@ export default function DashboardPage() {
         ))}
       </div>
 
+      {/* 2.7.18/2.7.20 — chaque profil a SON graphique mensuel : l'histogramme
+          des ventes pour la pharmacie, les flux du dépôt pour la réserve.
+          2.7.21 — l'ADMINISTRATEUR voit LES DEUX : ventes du comptoir ET
+          entrées/sorties de la réserve (les choses importantes du dépôt). */}
+      {!estDepot
+        ? <div style={{ marginBottom: 16 }}><SalesHistogram /></div>
+        : <div style={{ marginBottom: 16 }}><DepotFlowChart /></div>}
+      {estAdmin ? <div style={{ marginBottom: 16 }}><DepotFlowChart /></div> : null}
+
       <div className="grid grid--2">
-        <Card title={estDepot ? 'Alertes de stock (dépôt)' : 'Alertes de stock (magasin du profil)'}
+        <Card title={estDepot ? 'Alertes de stock (dépôt)' : 'Alertes de stock (pharmacie)'}
           actions={<Badge tone={rouges.length ? 'danger' : alerts.length ? 'warn' : 'ok'}>
             {alerts.length ? `${alerts.length} alerte(s)` : 'aucune'}
           </Badge>}>
@@ -157,25 +202,10 @@ export default function DashboardPage() {
             )}
           </Card>
 
-          <Card title={estDepot ? 'Mes derniers transferts vers la pharmacie' : 'Derniers transferts dépôt → pharmacie'}>
-            {transfertsRecents.length === 0 ? <Empty>Aucun transfert enregistré.</Empty> : (
-              <div className="table-scroll">
-                <table className="data">
-                  <thead><tr><th>Référence</th><th>Motif</th><th>Date</th><th className="num">Valeur</th></tr></thead>
-                  <tbody>
-                    {transfertsRecents.map(transfert => (
-                      <tr key={transfert.id}>
-                        <td>{transfert.reference}</td>
-                        <td className="wrap">{transfert.reason}</td>
-                        <td>{String(transfert.date).slice(0, 10)}</td>
-                        <td className="num">{money(transfert.costTotal)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
+          {/* 2.7.20 — la carte récapitulative des derniers transferts est
+              RETIRÉE aussi côté dépôt : l'historique vit dans le menu
+              « Historique de transfert », et le suivi J/J dans le nouveau menu
+              « Calendrier des stock ». */}
         </div>
       </div>
     </>

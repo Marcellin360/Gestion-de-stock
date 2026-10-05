@@ -16,6 +16,9 @@ export const describeUser = user => ({
   id: user.id,
   name: user.name,
   login: user.login,
+  // 2.7.24 — roleId exposé : la liste des comptes affiche le rôle (sans « — »)
+  // et le formulaire de modification présélectionne le bon rôle.
+  roleId: user.roleId ?? user.role?.id ?? null,
   roleCode: user.role?.code,
   roleName: user.role?.name,
   permissions: Array.isArray(user.role?.permissions) ? user.role.permissions : []
@@ -31,7 +34,9 @@ export async function login({ login, password }, meta = {}, transaction) {
     transaction
   });
   const valid = await bcrypt.compare(password, user?.passwordHash || DUMMY_HASH);
-  ensure(user && valid, 'Identifiants invalides.', 401);
+  // 2.7.25 — phrase claire et unique (norme) : on ne précise jamais lequel des
+  // deux est faux, mais le message est parlant (pas d'« erreur 500 » en clair).
+  ensure(user && valid, 'Identifiant ou mot de passe incorrect.', 401);
   ensure(user.active, 'Compte désactivé. Contactez l’administrateur.', 401);
 
   const token = crypto.randomBytes(32).toString('hex');

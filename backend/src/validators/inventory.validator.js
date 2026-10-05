@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { identifier, positiveQuantity, text, requestKey, longText } from './common.validator.js';
+import { identifier, positiveDecimalQuantity, text, requestKey, longText } from './common.validator.js';
 
 export const inventoryOpenSchema = z.object({
   location: z.enum(['DEPOT', 'PHARMACY'], { message: 'Choisir le magasin à compter (Dépôt ou Pharmacie)' }),
@@ -12,7 +12,8 @@ export const inventoryValidateSchema = z.object({
   note: text.default(''),
   lines: z.array(z.object({
     id: identifier,
-    physical: positiveQuantity,
+    // 2.7.12 — décimales autorisées (ex. 8,3 boîtes après une vente au détail).
+    physical: positiveDecimalQuantity,
     reason: longText.default('')
   }).strict()).min(1).max(20000)
 }).strict();

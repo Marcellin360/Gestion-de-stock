@@ -75,10 +75,26 @@ export async function buildReport({ type, from, to, supplierId = null, location 
       SELECT p.code AS "Code", p.name AS "Médicament",
              ${withLocationColumn ? "CASE :location WHEN 'DEPOT' THEN 'Dépôt' ELSE 'Pharmacie' END AS \"Magasin\"," : ''}
              COALESCE(c.name, '—') AS "Catégorie", p.unit AS "Unité",
-             COALESCE(avant.qte, 0)::int AS "Stock initial",
-             COALESCE(entrees.qte, 0)::int AS "Entrées",
-             COALESCE(sorties.qte, 0)::int AS "Sorties",
-             (COALESCE(avant.qte, 0) + COALESCE(entrees.qte, 0) - COALESCE(sorties.qte, 0))::int AS "Stock final",
+             /* 2.7.12 — quantités décimales (vente au détail) : le registre
+                affiche les fractions de boîte au millième le cas échéant. */
+             /* ::float8 = node-pg sert alors un NOMBRE (jamais '66.000000'),
+                indispensable aux calculs du comptoir et de l'impression. */
+             ROUND(COALESCE(avant.qte, 0), 3)::float8 AS "Stock initial",
+             ROUND(COALESCE(entrees.qte, 0), 3)::float8 AS "Entrées",
+             ROUND(COALESCE(sorties.qte, 0), 3)::float8 AS "Sorties",
+             ROUND(COALESCE(avant.qte, 0) + COALESCE(entrees.qte, 0) - COALESCE(sorties.qte, 0), 3)::float8 AS "Stock final",
+             /* 2.7.17 — colonnes de DÉTAIL par prise (boîte / plaquette),
+                fournies EN PLUS des colonnes classiques : l'écran Stock ne les
+                montre qu'au clic du bouton « Détail boîte / plaquette ».
+                Règle : l'entier en boîtes, la fraction × conditionnement en
+                plaquettes (vendre 5 plaquettes d'une boîte de 10 = 5). */
+             FLOOR(COALESCE(sorties.qte, 0))::float8 AS "Sorties boîte",
+             ROUND((COALESCE(sorties.qte, 0) - FLOOR(COALESCE(sorties.qte, 0)))
+                   * p.blisters_per_box, 3)::float8 AS "Sorties plaquette",
+             FLOOR(COALESCE(avant.qte, 0) + COALESCE(entrees.qte, 0) - COALESCE(sorties.qte, 0))::float8 AS "Stock final boîte",
+             ROUND(((COALESCE(avant.qte, 0) + COALESCE(entrees.qte, 0) - COALESCE(sorties.qte, 0))
+                    - FLOOR(COALESCE(avant.qte, 0) + COALESCE(entrees.qte, 0) - COALESCE(sorties.qte, 0)))
+                   * p.blisters_per_box, 3)::float8 AS "Stock final plaquette",
              p.min_stock::int AS "Seuil minimum",
              CASE
                WHEN (COALESCE(avant.qte, 0) + COALESCE(entrees.qte, 0) - COALESCE(sorties.qte, 0)) <= 0 THEN 'Rupture'
@@ -120,7 +136,7 @@ export async function buildReport({ type, from, to, supplierId = null, location 
     stock: `
       SELECT p.code AS "Code", p.name AS "Médicament", c.name AS "Catégorie", p.unit AS "Unité",
              CASE l.location WHEN 'DEPOT' THEN 'Dépôt' ELSE 'Pharmacie' END AS "Magasin",
-             l.number AS "Lot", l.expires_on AS "Expiration", l.quantity::int AS "Quantité",
+             l.number AS "Lot", l.expires_on AS "Expiration", ROUND(l.quantity, 3)::float8 AS "Quantité",
              l.unit_cost AS "Coût unitaire (Ar)",
              ROUND(l.quantity * CASE WHEN :cmp = 'CMP' THEN p.cmp ELSE l.unit_cost END, 2) AS "Valeur (Ar)",
              s.name AS "Fournisseur"
@@ -136,7 +152,7 @@ export async function buildReport({ type, from, to, supplierId = null, location 
       SELECT m.created_at AS "Date", m.document_type AS "Type", m.kind AS "Nature",
              CASE m.location WHEN 'DEPOT' THEN 'Dépôt' ELSE 'Pharmacie' END AS "Magasin",
              p.code AS "Code", p.name AS "Médicament", l.number AS "Lot",
-             m.quantity::int AS "Quantité", m.unit_cost AS "Coût unitaire (Ar)",
+             ROUND(m.quantity, 3)::float8 AS "Quantité", m.unit_cost AS "Coût unitaire (Ar)",
              ROUND(m.quantity * m.unit_cost, 2) AS "Valeur (Ar)",
              u.name AS "Utilisateur", m.reason AS "Motif"
       FROM movements m
@@ -165,7 +181,11 @@ export async function buildReport({ type, from, to, supplierId = null, location 
 
     sales: `
       SELECT sa.created_at AS "Date", sa.reference AS "Référence", sa.customer_name AS "Client",
-             sl.quantity::int AS "Quantité", p.name AS "Médicament", l.number AS "Lot",
+             /* 2.7.12 — vente au détail : la quantité est affichée DANS L'UNITÉ
+                vendue (boîte / plaquette / comprimé), pas en équivalent-boîte. */
+             ROUND(sl.sale_quantity, 2)::float8 AS "Quantité",
+             CASE sl.sale_unit WHEN 'BOX' THEN p.unit WHEN 'BLISTER' THEN 'Plaquette' ELSE 'Comprimé' END AS "Forme",
+             p.name AS "Médicament", l.number AS "Lot",
              sl.unit_price AS "Prix unitaire (Ar)", sl.unit_cost AS "Coût retenu (Ar)",
              ROUND(sl.margin, 2) AS "Marge (Ar)", u.name AS "Servi par"
       FROM sale_lines sl
@@ -209,7 +229,7 @@ export async function buildReport({ type, from, to, supplierId = null, location 
     expirations: `
       SELECT p.code AS "Code", p.name AS "Médicament",
              CASE l.location WHEN 'DEPOT' THEN 'Dépôt' ELSE 'Pharmacie' END AS "Magasin",
-             l.number AS "Lot", l.expires_on AS "Expiration", l.quantity::int AS "Quantité en stock",
+             l.number AS "Lot", l.expires_on AS "Expiration", ROUND(l.quantity, 3)::float8 AS "Quantité en stock",
              l.unit_cost AS "Coût unitaire (Ar)",
              ROUND(l.quantity * l.unit_cost, 2) AS "Valeur immobilisée (Ar)",
              CASE
@@ -233,7 +253,7 @@ export async function buildReport({ type, from, to, supplierId = null, location 
              i.status AS "Statut",
              i.scope AS "Périmètre", i.lines_count::int AS "Lots comptés",
              COUNT(il.id) FILTER (WHERE il.gap <> 0)::int AS "Lots avec écart",
-             COALESCE(SUM(il.gap), 0)::int AS "Écart total (unités)",
+             ROUND(COALESCE(SUM(il.gap), 0), 3)::float8 AS "Écart total (unités)",
              u.name AS "Responsable", i.validated_at AS "Validation",
              a.reference AS "Ajustement"
       FROM inventories i

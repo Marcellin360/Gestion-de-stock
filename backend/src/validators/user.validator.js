@@ -12,10 +12,10 @@ const base = {
 
 export const userCreateSchema = z.object({
   ...base,
-  password: z.string().min(12, '12 caractères minimum').max(128)
+  password: z.string().min(4, '4 caractères minimum').max(128)
 }).strict();
 
 export const userUpdateSchema = z.object({
   ...base,
-  password: z.union([z.string().min(12, '12 caractères minimum').max(128), z.literal('')]).optional()
+  password: z.union([z.string().min(4, '4 caractères minimum').max(128), z.literal('')]).optional()
 }).strict();

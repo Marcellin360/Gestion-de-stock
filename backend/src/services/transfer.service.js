@@ -80,17 +80,20 @@ export async function createTransfer(payload, user, transaction) {
     if (cible) {
       ensure(cible.status === STATUS.AVAILABLE,
         `Le lot ${source.number} est bloqué dans « ${LOCATION_LABELS[to]} » : le débloquer avant de transférer.`);
-      // Seule la quantité « reçue » est ajustée ici : la quantité en stock est
-      // portée par le mouvement d'entrée ci-dessous (une seule écriture, donc
-      // aucune double comptabilisation possible).
-      await cible.update({
-        receivedQuantity: Number(cible.receivedQuantity) + Number(ligne.quantity)
-      }, { transaction });
+      // Rien à ajuster sur la quantité « reçue » : elle compte les entrées d'un
+      // FOURNISSEUR (c'est elle qui alimente le CMP). La marchandise transférée
+      // vient du dépôt, pas d'un fournisseur — l'ajouter ici compterait deux fois
+      // le même achat et fausserait le coût moyen. La quantité en stock, elle, est
+      // portée par le mouvement d'entrée ci-dessous.
     } else {
       cible = await Lot.create({
         productId: source.productId, supplierId: source.supplierId, number: source.number, location: to,
         receivedOn: source.receivedOn, manufacturedOn: source.manufacturedOn, expiresOn: source.expiresOn,
-        quantity: 0, receivedQuantity: Number(ligne.quantity),
+        quantity: 0,
+        // 0 : ce lot n'a rien reçu d'un fournisseur. Seules les réceptions comptent
+        // dans le CMP (services/pricing.service.js). La valeur du lot transféré est
+        // portée par son coût de revient (unitCost), inchangé.
+        receivedQuantity: 0,
         purchasePrice: source.purchasePrice, allocatedFees: '0.000000',
         unitCost: source.unitCost, status: STATUS.AVAILABLE
       }, { transaction });

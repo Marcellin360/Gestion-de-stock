@@ -19,6 +19,7 @@ export default function SettingsPage() {
     managerName: settings.managerName || '',
     currency: settings.currency || 'Ar',
     valuation: settings.valuation || 'LOT',
+    pricingBasis: settings.pricingBasis || 'CMP',
     marginMode: settings.marginMode || 'COST',
     minMargin: Number(settings.minMargin ?? 10),
     maxMargin: Number(settings.maxMargin ?? 30),
@@ -89,6 +90,14 @@ export default function SettingsPage() {
           <Select value={values.valuation} onChange={e => maj({ valuation: e.target.value })}>
             <option value="LOT">Coût de revient réel du lot</option>
             <option value="CMP">Coût moyen pondéré (CMP)</option>
+          </Select>
+        </Field>
+
+        <Field label="Prix de vente calculé sur"
+          hint="Coût moyen pondéré (CMP) : les réceptions du même médicament sont additionnées puis moyennées — conseillé en officine. Dernier lot : le prix suit la dernière livraison.">
+          <Select value={values.pricingBasis} onChange={e => maj({ pricingBasis: e.target.value })}>
+            <option value="CMP">Coût moyen pondéré (CMP) — la moyenne des réceptions</option>
+            <option value="LOT">Coût du dernier lot reçu</option>
           </Select>
         </Field>
 

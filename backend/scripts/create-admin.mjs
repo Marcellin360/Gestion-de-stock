@@ -15,7 +15,7 @@ async function main() {
   const name = process.env.ADMIN_NAME || 'Administrateur';
   const password = process.env.ADMIN_PASSWORD || '';
 
-  if (password.length < 12) throw new Error('ADMIN_PASSWORD doit contenir au moins 12 caractères.');
+  if (password.length < 4) throw new Error('ADMIN_PASSWORD doit contenir au moins 4 caractères.');
   const existing = await User.count();
   if (existing > 0) {
     throw new Error('Initialisation refusée : des utilisateurs existent déjà. Utiliser l’écran Utilisateurs (ou réinitialiser le mot de passe).');

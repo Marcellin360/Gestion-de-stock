@@ -23,6 +23,12 @@ export default function referenceRoutes() {
     });
   }
 
+  // Suppression d'un fournisseur (bouton corbeille de la liste). Refusée si le
+  // fournisseur a déjà livré : voir controller.remove pour le détail des règles.
+  router.delete('/suppliers/:id', requirePermission('reference'), (req, res, next) => {
+    req.params.resource = 'suppliers'; controller.remove(req, res).catch(next);
+  });
+
   // Prix de vente et taux de marge : réservés aux profils autorisés (RG24).
   router.put('/products/:id/margin', requirePermission('prices'), validateBody(z.object({
     marginRate: z.number().min(0).max(99.99),

@@ -6,7 +6,12 @@ import { config } from '../config/index.js';
 
 export function securityMiddleware(app) {
   app.disable('x-powered-by');
-  if (config.trustProxy) app.set('trust proxy', 1);
+  // 2.7.25 — « trust proxy » vaut « loopback » par défaut : lorsque nginx (ou le
+  // retransmetteur local) ajoute l'en-tête X-Forwarded-For, le limiteur de
+  // connexion le lit sans lever d'erreur interne (sinon « erreur 500 » à
+  // l'écran de connexion). TRUST_PROXY=1 force un proxy quelconque ; en
+  // exposition directe, les en-têtes externes restent ignorés (loopback seul).
+  app.set('trust proxy', config.trustProxy ? 1 : 'loopback');
   app.use(helmet({
     contentSecurityPolicy: {
       useDefaults: true,

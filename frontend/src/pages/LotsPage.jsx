@@ -66,12 +66,12 @@ export default function LotsPage() {
   return (
     <>
       <Card title={`${lignes.length} lot(s)`}
-          actions={<Btn variant="ghost" icon={Printer}
+        actions={<Btn variant="ghost" icon={Printer}
           onClick={() => openPrintable(`/reports/print?type=stock&from=${new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10)}&to=${new Date().toISOString().slice(0, 10)}&location=${filtres.magasin || 'ALL'}`)}>
           État de stock imprimable
         </Btn>}>
         <div className="inline-form" style={{ marginBottom: 12 }}>
-                    {estDepot ? (
+          {estDepot ? (
             <Field label="Magasin" hint="Votre profil travaille sur la réserve : seuls les lots du dépôt sont affichés.">
               <Input value="Dépôt (réserve)" readOnly />
             </Field>
@@ -117,7 +117,10 @@ export default function LotsPage() {
             <table className="data">
               <thead>
                 <tr>
-                  <th>Médicament</th><th>Magasin</th><th>Lot</th><th className="num">Quantité</th>
+                  {/* 2.7.10 — la colonne « Lot » (numéro interne) cède la place à la date de
+                      réception, plus parlante au quotidien ; le numéro reste dans le filtre,
+                      le blocage et l'écran des mouvements. */}
+                  <th>Médicament</th><th>Magasin</th><th>Reçu le</th><th className="num">Quantité</th>
                   {can(['prices', 'costs']) ? <th className="num">Coût retenu</th> : null}
                   <th>Expiration</th><th>État</th><th />
                 </tr>
@@ -127,7 +130,7 @@ export default function LotsPage() {
                   <tr key={lot.id}>
                     <td className="wrap">{productName(lot.productId)}</td>
                     <td><Badge tone={lot.location === 'DEPOT' ? 'info' : 'default'}>{(LOCATION_SHORT[lot.location] || '—')}</Badge></td>
-                    <td>{lot.number}</td>
+                    <td>{lot.receivedOn ? date(lot.receivedOn) : '—'}</td>
                     <td className="num">{integer(lot.quantity)}</td>
                     {can(['prices', 'costs']) ? <td className="num">{money(settings.valuation === 'CMP' ? lot.unitCost : lot.purchasePrice)}</td> : null}
                     <td>

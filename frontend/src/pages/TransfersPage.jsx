@@ -1,19 +1,25 @@
-// Transferts dépôt → pharmacie : l'écran qui remplace les commandes et les
-// retours. Il montre ce qui est passé de la réserve au comptoir, quand, par qui
-// et pour quel motif. C'est l'historique du dépôt côté entrées/sorties.
-import { useMemo, useState } from 'react';
-import { ArrowRightLeft, Printer, Eye } from 'lucide-react';
-import { openPrintable } from '../api/client.js';
+// Historique de transfert (2.7.11 — nouveau titre du menu « Transferts dépôt →
+// pharmacie ») : l'écran qui remplace les commandes et les retours. Il montre
+// ce qui est passé de la réserve au comptoir, quand, par qui et pour quel
+// motif — avec le détail complet de chaque transfert (bouton « Détail »).
+//
+// 2.7.8 — le bouton « Bordereau » est retiré : tout se fait depuis « Détail »,
+// qui ouvre une boîte de dialogue (date, valeur, lots, bouton Télécharger).
+import { useCallback, useMemo, useState } from 'react';
+import { ArrowRightLeft, Eye } from 'lucide-react';
+import { stock } from '../api/endpoints.js';
 import { useData } from '../context/DataContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { Badge, Btn, Card, Empty, ErrorBox, Field, Modal, Select, Table } from '../components/ui.jsx';
+import DocumentModal from '../components/DocumentModal.jsx';
 import TransferForm from '../forms/TransferForm.jsx';
 import { dateTime, integer, money } from '../utils/format.js';
 
 export default function TransfersPage() {
   const { documents, refresh } = useData();
-  const { can } = useAuth();
+  // 2.7.20 — le profil sert à masquer « Nouveau transfert » côté pharmacie.
+  const { can, user } = useAuth();
   const toast = useToast();
   const [creation, setCreation] = useState(false);
   const [detail, setDetail] = useState(null);
@@ -33,22 +39,48 @@ export default function TransfersPage() {
   const valides = transferts.filter(doc => doc.status === 'VALIDATED');
   const valeurTotale = valides.reduce((somme, doc) => somme + Number(doc.costTotal || 0), 0);
 
-  const lignesDetail = detail
-    ? (detail.lines || []).map(ligne => ({
-      produit: ligne.product || `Médicament #${ligne.productId}`,
-      lot: ligne.lot,
-      quantity: ligne.quantity,
-      expiration: ligne.expiresOn || '—',
-      valeur: ligne.value
-    }))
-    : [];
+  const ouvert = transfert => {
+    setError(null);
+    setDetail(transfert);
+  };
+
+  // L'API renvoie { transfer, lines } : le transfert (en-tête) et ses lignes déjà
+  // mises en forme (médicament, lot, quantité, coût unitaire, valeur).
+  const chargerDetail = useCallback(async () => {
+    const { transfer, lines } = await stock.transfer(detail.id);
+    return {
+      reference: transfer.reference,
+      type: 'Transfert dépôt → pharmacie',
+      date: transfer.createdAt || transfer.date,
+      statut: transfer.status === 'VALIDATED' ? 'validé' : 'annulé',
+      total: transfer.costTotal,
+      imprimable: `/documents/TRANSFER/${transfer.id}/print`,
+      infos: [
+        { label: 'Sens', valeur: 'Dépôt (réserve) → Pharmacie (comptoir)' },
+        { label: 'Motif', valeur: transfer.reason || '—' },
+        { label: 'Remarque', valeur: transfer.note || '—' }
+      ],
+      lignes: (lines || []).map(ligne => ({
+        product: ligne.product,
+        code: ligne.code === '—' ? '' : ligne.code,
+        lot: ligne.lot,
+        expiresOn: ligne.expiresOn,
+        quantity: ligne.quantity,
+        unitCost: ligne.unitCost,
+        value: ligne.value
+      }))
+    };
+  }, [detail?.id]);
 
   return (
     <>
-      <Card title={`${transferts.length} transfert(s) — dépôt vers pharmacie`}
+      <Card title={`Historique de transfert — ${transferts.length} transfert(s) dépôt → pharmacie`}
         actions={<>
           <Badge tone="info">Valeur transférée : {money(valeurTotale)}</Badge>
-          {can('transfer') ? (
+          {/* 2.7.20 — le seed donne la permission 'transfer' à la pharmacie aussi,
+              mais « Nouveau transfert » n'a de sens qu'au DÉPÔT : le bouton est
+              MASQUÉ côté pharmacie (sur le Pharmacie ihany), l'historique reste. */}
+          {can('transfer') && user?.roleCode !== 'PHARMACIST' ? (
             <Btn variant="primary" icon={ArrowRightLeft} onClick={() => setCreation(true)}>Nouveau transfert</Btn>
           ) : null}
         </>}>
@@ -90,15 +122,7 @@ export default function TransfersPage() {
                   ? <Badge tone="ok">validé</Badge>
                   : <Badge tone="danger">annulé</Badge>}</td>
                 <td className="right nowrap">
-                  <Btn variant="ghost" icon={Eye} onClick={async () => {
-                    setError(null);
-                    try {
-                      const { stock } = await import('../api/endpoints.js');
-                      setDetail(await stock.transfer(transfert.id));
-                    } catch (cause) { setError(cause); }
-                  }}>Détail</Btn>
-                  <Btn variant="ghost" icon={Printer}
-                    onClick={() => openPrintable(`/documents/TRANSFER/${transfert.id}/print`)}>Bordereau</Btn>
+                  <Btn variant="ghost" icon={Eye} onClick={() => ouvert(transfert)}>Détail</Btn>
                 </td>
               </tr>
             ))}
@@ -107,7 +131,8 @@ export default function TransfersPage() {
 
         <p className="muted" style={{ fontSize: '.82rem', marginTop: 10 }}>
           Le stock du dépôt diminue et celui de la pharmacie augmente en une seule opération, tracée dans les
-          mouvements de stock. Un transfert annulé remet les quantités dans le dépôt.
+          mouvements de stock. Un transfert annulé remet les quantités dans le dépôt. « Détail » affiche le
+          bordereau dans une fenêtre, avec téléchargement immédiat.
         </p>
       </Card>
 
@@ -122,28 +147,8 @@ export default function TransfersPage() {
       ) : null}
 
       {detail ? (
-        <Modal title={`Transfert ${detail.reference || ''}`} onClose={() => setDetail(null)} wide>
-          <div className="grid grid--2" style={{ marginBottom: 10 }}>
-            <div><strong>Date :</strong> {dateTime(detail.date)}</div>
-            <div><strong>Motif :</strong> {detail.reason}</div>
-            <div><strong>Remarque :</strong> {detail.note || '—'}</div>
-            <div><strong>Valeur :</strong> {money(detail.costTotal)}</div>
-          </div>
-          <Table columns={[
-            { label: 'Médicament' }, { label: 'Lot' }, { label: 'Expiration' },
-            { label: 'Quantité', num: true }, { label: 'Valeur', num: true }
-          ]}>
-            {lignesDetail.map((ligne, index) => (
-              <tr key={index}>
-                <td className="wrap">{ligne.produit}</td>
-                <td>{ligne.lot}</td>
-                <td>{ligne.expiration}</td>
-                 <td className="num">{integer(ligne.quantity)}</td>
-                <td className="num">{money(ligne.valeur)}</td>
-              </tr>
-            ))}
-          </Table>
-        </Modal>
+        <DocumentModal titre={`Transfert ${detail.reference || ''}`.trim()}
+          charger={chargerDetail} onClose={() => setDetail(null)} />
       ) : null}
     </>
   );

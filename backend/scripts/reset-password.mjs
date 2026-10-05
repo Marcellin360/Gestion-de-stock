@@ -20,8 +20,8 @@ async function main() {
   const login = String(process.env.RESET_LOGIN || 'admin').trim();
   const password = process.env.RESET_PASSWORD || '';
 
-  if (password.length < 12) {
-    throw new Error('RESET_PASSWORD doit contenir au moins 12 caractères (exemple PowerShell : $env:RESET_PASSWORD="Pharma-Officine-2026!" ; node scripts/reset-password.mjs).');
+  if (password.length < 4) {
+    throw new Error('RESET_PASSWORD doit contenir au moins 4 caractères (exemple PowerShell : $env:RESET_PASSWORD="Pharma-2026" ; node scripts/reset-password.mjs).');
   }
 
   const user = await User.findOne({ where: { login }, include: [{ model: Role, as: 'role' }] });

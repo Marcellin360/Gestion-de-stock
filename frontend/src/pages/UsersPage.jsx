@@ -29,36 +29,27 @@ export default function UsersPage() {
 
   useEffect(() => { charger(); }, []);
 
-  const roleName = roleId => roles.find(role => Number(role.id) === Number(roleId))?.name || '—';
-  const rolePermissions = roleId => roles.find(role => Number(role.id) === Number(roleId))?.permissions || [];
-
   return (
     <>
-      <div className="grid grid--3" style={{ marginBottom: 14 }}>
-        {roles.map(role => (
-          <Card key={role.id} title={role.name}>
-            <p className="muted" style={{ fontSize: '.84rem' }}>{(role.permissions || []).length} droit(s)</p>
-            <div className="pill-row">
-              {(role.permissions || []).slice(0, 8).map(permission => <Badge key={permission} tone="info">{permission}</Badge>)}
-            </div>
-          </Card>
-        ))}
-      </div>
-
+      {/* 2.7.24 — les cartes de présentation des rôles (« Administrateur —
+          14 droit(s) referencereceipttransfer… », etc.) sont RETIRÉES de cette
+          page : l'écran ne montre plus que la LISTE DES COMPTES (et les rôles
+          servent au formulaire de création/modification). */}
       <Card title={`${liste?.length ?? 0} compte(s)`}
         actions={<Btn variant="primary" icon={Plus} onClick={() => setEdition('nouveau')}>Nouvel utilisateur</Btn>}>
         <ErrorBox error={error} />
         {liste === null ? <Spinner page /> : liste.length === 0 ? <Empty>Aucun compte enregistré.</Empty> : (
           <Table columns={[
-            { label: 'Nom' }, { label: 'Identifiant' }, { label: 'Rôle' }, { label: 'Droits', num: true },
+            // 2.7.24 — colonne « Droits » retirée ; le « Rôle » s'affiche en
+            // clair (compte.roleName vient du serveur — jamais « — »).
+            { label: 'Nom' }, { label: 'Identifiant' }, { label: 'Rôle' },
             { label: 'Téléphone' }, { label: 'Dernière connexion' }, { label: 'État' }, { label: '' }
           ]}>
             {liste.map(compte => (
               <tr key={compte.id}>
                 <td><strong>{compte.name}</strong>{compte.id === user.id ? <Badge tone="ok">vous</Badge> : null}</td>
                 <td>{compte.login}</td>
-                <td>{roleName(compte.roleId)}</td>
-                <td className="num">{rolePermissions(compte.roleId).length}</td>
+                <td>{compte.roleName || '—'}</td>
                 <td>{compte.phone || '—'}</td>
                 <td>{compte.lastLoginAt ? new Date(compte.lastLoginAt).toLocaleString('fr-FR') : 'jamais'}</td>
                 <td>{compte.active ? <Badge tone="ok">actif</Badge> : <Badge tone="danger">désactivé</Badge>}</td>

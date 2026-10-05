@@ -1,6 +1,19 @@
 // ============================================================================
 // Ventes (§9.10, RG05, RG08) : proposition des lots en FEFO, calcul du prix côté
 // serveur, décrément du stock uniquement après validation, marge brute conservée.
+//
+// 2.7.12 — VENTE AU DÉTAIL en 3 unités par ligne :
+//   BOX     → boîte entière (unité de gestion du stock) ;
+//   BLISTER → plaquette (« boîte 1 = plaquettes N », N réglé dans la fiche) ;
+//   UNIT    → comprimé (« plaquette 1 = comprimé M »).
+// « quantity » dans la requête = le nombre tapé DANS L'UNITÉ CHOISIE (entier,
+// ex. 3 plaquettes). Le serveur convertit en équivalent-boîte pour le stock
+// (3 plaquettes = 0,3 boîte si la boîte fait 10 plaquettes) : les mouvements,
+// la valorisation et les marges restent exacts, comme avant.
+//
+// Les 3 prix sont INDÉPENDANTS (« tsy hitovy ny vidiny ») : le prix d'une
+// plaquette ou d'un comprimé se règle par médicament ; à 0, il est calculé
+// automatiquement AU PRORATA du prix de la boîte au moment de la vente.
 // ============================================================================
 import { Sale, SaleLine, Product } from '../models/index.js';
 import { D, money } from '../utils/money.js';
@@ -8,10 +21,49 @@ import { ensure } from '../utils/errors.js';
 import { today } from '../utils/dates.js';
 import { reference as makeReference } from '../utils/ids.js';
 import { STATUS, LOT_PICKING } from '../config/constants.js';
-import { lockProductLots, pickLots, applyMovements } from './stock.service.js';
+import { lockProductLots, pickLots, applyMovements, quantite } from './stock.service.js';
 import { salePrice, retainedCost } from './pricing.service.js';
 import { getSettings } from './settings.service.js';
 import { log } from './audit.service.js';
+
+/** Nombre de sous-unités contenues dans 1 boîte (unité de gestion). */
+export function saleUnitFactor(product, saleUnit) {
+  if (saleUnit === 'BLISTER') return Number(product.blistersPerBox) || 0;
+  if (saleUnit === 'UNIT') return (Number(product.blistersPerBox) || 0) * (Number(product.unitsPerBlister) || 0);
+  return 1;
+}
+
+/** Libellé d'unité pour les messages d'erreur et les documents. */
+export const SALE_UNIT_LABELS = { BOX: 'boîte', BLISTER: 'plaquette', UNIT: 'comprimé' };
+
+/**
+ * Prix PAR UNITÉ de vente demandée (RG21 : 3 prix indépendants).
+ * Prix détaillé non renseigné (= 0) sur la fiche → calcul au prorata du prix
+ * de la boîte appliqué au comptoir (jamais de prix différent de l'étiquette).
+ */
+export function priceForUnit(product, saleUnit, boxPrice) {
+  if (saleUnit === 'BLISTER') {
+    return D(product.pricePerBlister).gt(0)
+      ? money(product.pricePerBlister)
+      : money(D(boxPrice).div(saleUnitFactor(product, 'BLISTER')));
+  }
+  if (saleUnit === 'UNIT') {
+    return D(product.pricePerUnit).gt(0)
+      ? money(product.pricePerUnit)
+      : money(D(boxPrice).div(saleUnitFactor(product, 'UNIT')));
+  }
+  return boxPrice;
+}
+
+/** Vérifie que l'unité demandée est vendable pour ce médicament. */
+function assertUnitAllowed(product, saleUnit) {
+  if (saleUnit === 'BOX') return;
+  const facteur = saleUnitFactor(product, saleUnit);
+  ensure(facteur > 1,
+    `« ${product.name} » ne se vend pas par ${SALE_UNIT_LABELS[saleUnit]} : `
+    + 'son conditionnement n’en comporte pas. Renseignez le nombre de plaquettes / comprimé '
+    + 'dans la fiche du médicament (Catalogue → Modifier) pour l’activer.');
+}
 
 /**
  * Proposition de vente (aucun impact sur le stock) : lots FEFO, quantités et prix.
@@ -19,34 +71,68 @@ import { log } from './audit.service.js';
  */
 export async function quoteSale(payload, transaction) {
   const settings = await getSettings(transaction);
-  const lines = [];
+  const lignesPrecedentes = [];
   let total = D(0);
   for (const row of payload.lines) {
     const product = await Product.findByPk(row.productId, { transaction });
     ensure(product && product.active, 'Médicament absent ou inactif.');
+    const saleUnit = row.saleUnit || 'BOX';
+    assertUnitAllowed(product, saleUnit);
+    const facteur = saleUnitFactor(product, saleUnit);
+    // Équivalent en unité de gestion (boîte) retiré du stock : 6 décimales.
+    const quantiteGestion = quantite(D(row.quantity).div(facteur).toFixed(6));
     // La vente se fait toujours au comptoir : seuls les lots de la PHARMACIE sont proposés.
     const lots = await lockProductLots(product.id, transaction, 'PHARMACY');
-    const picked = pickLots(lots, row.quantity, {
+    // Unités réellement vendables au comptoir : ce nombre est annoncé au caissier
+    // quand la quantité demandée dépasse le disponible (message actionnable).
+    const vendables = lots.filter(lot => lot.status === STATUS.AVAILABLE && Number(lot.quantity) > 0
+      && (settings.allowExpiredSale || (Boolean(lot.expiresOn) && lot.expiresOn >= today())));
+    const disponiblesGestion = vendables.reduce((total, lot) => total + Number(lot.quantity), 0);
+    const disponiblesUnites = quantite(Math.floor(D(disponiblesGestion).mul(facteur).toNumber() * 1e6) / 1e6);
+    const picked = pickLots(lots, quantiteGestion, {
       date: today(), method: LOT_PICKING.FEFO, allowExpired: settings.allowExpiredSale
     });
+    const etiquette = SALE_UNIT_LABELS[saleUnit];
     ensure(picked.missing === 0,
-      `Stock vendable insuffisant dans la pharmacie pour « ${product.name} » : `
-      + 'seuls les lots non expirés et non bloqués du comptoir sont proposés. Transférer depuis le dépôt si besoin.');
-    for (const { lot, quantity } of picked.picked) {
-      const cost = retainedCost(product, lot, settings.valuation);
-      const unitPrice = salePrice(cost, product.marginRate, settings.marginMode, settings.minMargin, settings.maxMargin);
-      lines.push({
+      `Stock vendable insuffisant au comptoir pour « ${product.name} » : ${disponiblesUnites} ${etiquette}(s) vendable(s), `
+      + `${row.quantity} demandée(s). Les lots expirés, bloqués ou sans date d’expiration ne sont jamais proposés ; `
+      + 'la marchandise restée au dépôt se transfère d’abord depuis l’écran « Transferts ».');
+    for (const { lot, quantity: priseGestion } of picked.picked) {
+      // Coût réel de sortie : le lot vendu (valorisation LOT) ou le CMP du médicament.
+      const coutGestion = retainedCost(product, lot, settings.valuation);
+      // PRIX APPLIQUÉ AU COMPTOIR = celui affiché dans le catalogue (calculé sur le
+      // CMP par défaut, voir services/pricing.service.js). Le recalculer lot par lot
+      // ferait vendre le même médicament à deux prix différents dans la journée,
+      // selon le lot que FEFO a sorti — et à un prix différent de l'étiquette.
+      // Repli sur le calcul par coût si la fiche n'a pas encore de prix (> 0).
+      const prixBoite = D(product.sellingPrice).gt(0)
+        ? money(product.sellingPrice)
+        : salePrice(coutGestion, product.marginRate, settings.marginMode, settings.minMargin, settings.maxMargin);
+      // Prix par unité vendue (plaquette / comprimé / boîte), 3 prix indépendants.
+      const prixUnite = priceForUnit(product, saleUnit, prixBoite);
+      // Coût retenu par unité vendue = coût d'une boîte ÷ facteur (6 décimales).
+      const coutUnite = money(D(coutGestion).div(facteur));
+      // Part de cette prise de lot exprimée dans l'unité vendue (peut être
+      // fractionnée si FEFO coupe une ligne entre deux lots).
+      const priseUnites = quantite(D(priseGestion).mul(facteur).toFixed(6));
+      lignesPrecedentes.push({
         productId: product.id, product: product.name, code: product.code, unit: product.unit,
         lotId: lot.id, lot: lot.number, expiresOn: lot.expiresOn,
-        quantity, unitPrice, unitCost: cost, marginRate: product.marginRate,
-        margin: money(D(unitPrice).sub(cost).mul(quantity))
+        saleUnit, unitFactor: facteur,
+        quantity: priseGestion,                       // équivalent-boîte (stock)
+        saleQuantity: priseUnites,                    // nombre dans l'unité vendue
+        unitPrice: prixUnite,                         // par unité vendue
+        unitCost: coutUnite,                          // par unité vendue
+        gestionCost: money(coutGestion),              // par boîte (mouvements)
+        marginRate: product.marginRate,
+        margin: money(D(prixUnite).sub(coutUnite).mul(priseUnites))
       });
-      total = total.add(D(unitPrice).mul(quantity));
+      total = total.add(D(prixUnite).mul(priseUnites));
     }
   }
-  const costTotal = lines.reduce((acc, line) => acc.add(D(line.unitCost).mul(line.quantity)), D(0));
+  const costTotal = lignesPrecedentes.reduce((acc, line) => acc.add(D(line.unitCost).mul(line.saleQuantity)), D(0));
   return {
-    lines,
+    lines: lignesPrecedentes,
     total: money(total),
     costTotal: money(costTotal),
     margin: money(total.sub(costTotal)),
@@ -67,7 +153,6 @@ export async function createSale(payload, user, transaction) {
     // Rejeu réseau : on renvoie la vente déjà enregistrée, sans nouveau mouvement de stock.
     return { sale: existing, lines: [] };
   }
-  const settings = await getSettings(transaction);
   const prepared = await quoteSale({ ...payload }, transaction);
   ensure(payload.expectedTotal === undefined || D(payload.expectedTotal).eq(prepared.total),
     'Le prix ou la disponibilité a changé depuis la vérification. Refaire la vérification avant de valider.', 409);
@@ -88,18 +173,22 @@ export async function createSale(payload, user, transaction) {
 
   for (const line of prepared.lines) {
     await SaleLine.create({
-      saleId: sale.id, productId: line.productId, lotId: line.lotId, quantity: line.quantity,
+      saleId: sale.id, productId: line.productId, lotId: line.lotId,
+      // « quantity » reste en unité de gestion (boîte) ; la traçabilité de la
+      // caisse est dans saleUnit / saleQuantity / unitFactor.
+      saleUnit: line.saleUnit, saleQuantity: line.saleQuantity, unitFactor: line.unitFactor,
+      quantity: line.quantity,
       unitPrice: line.unitPrice, unitCost: line.unitCost, marginRate: line.marginRate, margin: line.margin
     }, { transaction });
   }
 
-  // Sortie de stock : uniquement après validation (RG04, RG05).
+  // Sortie de stock : uniquement après validation (RG04, RG05) — en équivalent-boîte.
   await applyMovements({
     documentType: 'SALE', documentId: sale.id, userId: user.id, kind: 'SALE',
     reason: payload.customerName ? `Vente — ${payload.customerName}` : 'Vente comptoir',
     lines: prepared.lines.map(line => ({
       productId: line.productId, lotId: line.lotId, location: 'PHARMACY',
-      quantity: -line.quantity, unitCost: line.unitCost
+      quantity: quantite(-Number(line.quantity)), unitCost: line.gestionCost
     }))
   }, transaction);
 

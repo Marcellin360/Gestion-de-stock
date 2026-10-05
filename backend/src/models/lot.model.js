@@ -13,8 +13,14 @@ export const attributes = {
     receivedOn: {type:DataTypes.DATEONLY,allowNull:false},
     manufacturedOn: {type:DataTypes.DATEONLY,allowNull:true},
     expiresOn: {type:DataTypes.DATEONLY,allowNull:true},
-    quantity: {type:DataTypes.INTEGER,allowNull:false,defaultValue:0},
-    receivedQuantity: {type:DataTypes.INTEGER,allowNull:false,defaultValue:0},
+    // 2.7.12 — décimales acceptées : la vente de plaquettes/vongany retire des
+    // fractions de boîte (ex. 0,3). Les autres flux restent en boîtes entières.
+    // L'accesseur renvoie un NOMBRE JavaScript (PostgreSQL sert sinon la valeur
+    // NUMERIC en chaîne « 100.000000 », ce qui casserait les calculs du client).
+    quantity: {type:DataTypes.DECIMAL(20,6),allowNull:false,defaultValue:0,
+      get() { const v = this.getDataValue('quantity'); return v === null ? 0 : Number(v); }},
+    receivedQuantity: {type:DataTypes.DECIMAL(20,6),allowNull:false,defaultValue:0,
+      get() { const v = this.getDataValue('receivedQuantity'); return v === null ? 0 : Number(v); }},
     purchasePrice: {type:DataTypes.DECIMAL(20,6),allowNull:false},
     allocatedFees: {type:DataTypes.DECIMAL(20,6),allowNull:false},
     unitCost: {type:DataTypes.DECIMAL(20,6),allowNull:false},

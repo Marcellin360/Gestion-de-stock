@@ -13,13 +13,22 @@ export const auth = {
 
 export const dashboard = {
   data: () => api.get('/data'),
-  health: () => api.get('/health')
+  health: () => api.get('/health'),
+  // 2.7.17 — calendrier des ventes (totaux jour par jour d'un mois).
+  salesCalendar: month => api.get(`/data/sales-calendar?month=${month}`),
+  // 2.7.18 — histogramme du tableau de bord (totaux mois par mois, 12 mois).
+  salesMonthly: () => api.get('/data/sales-monthly'),
+  // 2.7.20 — dépôt : calendrier des stock (J/J) et flux mensuels entrées/sorties.
+  stockCalendar: month => api.get(`/data/stock-calendar?month=${month}`),
+  stockFlowMonthly: () => api.get('/data/stock-flow-monthly')
 };
 
 export const referentials = {
   search: term => api.get(`/search?q=${encodeURIComponent(term)}`),
   create: (resource, values) => api.post(`/${resource}`, values),
   update: (resource, id, values) => api.put(`/${resource}/${id}`, values),
+  /** Suppression (fournisseurs uniquement : les autres référentiels sont cités par l'historique). */
+  remove: (resource, id) => api.delete(`/${resource}/${id}`),
   margin: (productId, marginRate, reason) => api.put(`/products/${productId}/margin`, { marginRate: Number(marginRate), reason }),
   priceHistory: productId => api.get(`/products/${productId}/prices`)
 };

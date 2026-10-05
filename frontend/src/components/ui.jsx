@@ -85,16 +85,18 @@ export const PageHead = ({ title, subtitle, actions }) => (
   </div>
 );
 
-export function Modal({ title, onClose, children, footer, wide = false }) {
+export function Modal({ title, onClose, children, footer, wide = false, size = '' }) {
   useEffect(() => {
     const onKey = event => { if (event.key === 'Escape') onClose?.(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  // size = nom de variante CSS (2.7.24 : 'detail' = très grande boîte pleine écran).
+  const classes = `modal${wide ? ' modal--wide' : ''}${size ? ` modal--${size}` : ''}`;
   return (
     <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose?.(); }}>
-      <div className={`modal ${wide ? 'modal--wide' : ''}`} role="dialog" aria-modal="true">
+      <div className={classes} role="dialog" aria-modal="true">
         <header className="modal__head">
           <h2>{title}</h2>
           <div className="spacer" />

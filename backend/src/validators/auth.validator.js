@@ -7,5 +7,5 @@ export const loginSchema = z.object({
 
 export const passwordChangeSchema = z.object({
   current: z.string().min(1, 'Mot de passe actuel requis').max(200),
-  password: z.string().min(12, '12 caractères minimum').max(128)
+  password: z.string().min(4, '4 caractères minimum').max(128)
 }).strict();

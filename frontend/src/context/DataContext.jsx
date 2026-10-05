@@ -86,6 +86,8 @@ export function DataProvider({ children }) {
       productName: id => byId(products, id)?.name || `Médicament #${id}`,
       product: id => byId(products, id),
       lot: id => byId(lots, id),
+      // Numéro de lot lisible (bons de réception, transferts, détail des documents).
+      lotNumber: id => byId(lots, id)?.number || '—',
       supplierName: id => byId(data?.suppliers || [], id)?.name || '—',
       categoryName: id => byId(data?.categories || [], id)?.name || '—',
       userName: id => data?.users?.find(u => Number(u.id) === Number(id))?.name || `Utilisateur #${id}`,

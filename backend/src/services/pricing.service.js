@@ -28,6 +28,21 @@ export function salePrice(cost, rate, mode, minMargin, maxMargin) {
 }
 
 /** Contrôle d'une plage de marge sans calcul de prix (création/modification d'un médicament). */
+/**
+ * Coût retenu pour le calcul du PRIX DE VENTE.
+ *  - « CMP » (défaut) : coût moyen pondéré de toutes les réceptions du médicament ;
+ *  - « LOT »          : coût de revient du dernier lot reçu.
+ * C'est réglable dans Paramètres ; cela ne change pas la valorisation du stock
+ * (coût de sortie d'un lot, qui reste celui du lot réellement vendu).
+ */
+export function coutPourLePrix(lots, product, cmp, settings) {
+  const base = String(settings.pricingBasis || VALUATION.CMP).toUpperCase();
+  if (base === VALUATION.LOT) {
+    return money(lots.slice().sort((a, b) => b.id - a.id)[0]?.unitCost ?? 0);
+  }
+  return money(cmp);
+}
+
 export function assertMarginRate(rate, settings) {
   const value = D(rate);
   ensure(value.gte(settings.minMargin ?? settings.min_rate) && value.lte(settings.maxMargin ?? settings.max_rate),
@@ -62,9 +77,11 @@ export async function recomputeProductCosting(productId, settings, { userId = nu
     ? money(received.reduce((acc, lot) => acc.add(D(lot.unitCost).mul(Number(lot.receivedQuantity))), D(0)).div(quantity))
     : money(0);
 
-  const costUsed = settings.valuation === VALUATION.CMP
-    ? cmp
-    : money(lots.slice().sort((a, b) => b.id - a.id)[0]?.unitCost ?? 0);
+  // Le PRIX DE VENTE suit sa propre base (Paramètres → « Prix de vente calculé
+  // sur »), par défaut le CMP : deux réceptions du même médicament sont donc
+  // additionnées puis moyennées (100 × 1 000 + 80 × 2 000 → 1 444,444444 Ar),
+  // au lieu de suivre le prix de la dernière livraison.
+  const costUsed = coutPourLePrix(lots, product, cmp, settings);
 
   const price = salePrice(costUsed, product.marginRate, settings.marginMode, settings.minMargin, settings.maxMargin);
   const changed = !D(product.cmp).eq(cmp) || !D(product.sellingPrice).eq(price);
@@ -85,9 +102,9 @@ export async function changeMarginRate(productId, rate, settings, user, reason, 
   ensure(product, 'Médicament introuvable.', 404);
   const before = { marginRate: product.marginRate, sellingPrice: product.sellingPrice };
   const lots = await Lot.findAll({ where: { productId }, transaction });
-  const cost = settings.valuation === VALUATION.CMP
-    ? product.cmp
-    : money(lots.slice().sort((a, b) => b.id - a.id)[0]?.unitCost ?? 0);
+  // Même base que le recalcul automatique : le nouveau taux s'applique au CMP
+  // (ou au dernier lot, selon le réglage), jamais à un mélange des deux.
+  const cost = coutPourLePrix(lots, product, product.cmp, settings);
 
   const price = salePrice(cost, rate, settings.marginMode, settings.minMargin, settings.maxMargin);
   await product.update({ marginRate: rate, sellingPrice: price, updatedAt: new Date() }, { transaction });

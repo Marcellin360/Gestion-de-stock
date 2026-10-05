@@ -28,6 +28,12 @@
   --shadow: 0 6px 18px rgba(15, 23, 42, .10);
   --sidebar-width: 246px;
   --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  /* Aliases utilisés par .tabs et .choice (ils manquaient → onglets décolorés). */
+  --ink: var(--slate-900);
+  --muted: var(--slate-500);
+  --line: var(--slate-200);
+  --soft: var(--teal-100);
+  --brand: var(--teal-700);
 }
 
 * { box-sizing: border-box; }
@@ -74,7 +80,26 @@ code { background: var(--slate-100); padding: 1px 5px; border-radius: 5px; font-
 }
 .navlink:hover { background: rgba(255, 255, 255, .09); }
 .navlink--active { background: var(--teal-600); color: #fff; font-weight: 600; }
+/* Pastille chiffrée de la cloche des alertes (barre supérieure). */
+.topbar__icon { position: relative; display: inline-flex; }
+.topbar__badge {
+  position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px;
+  padding: 0 5px; border-radius: 999px; background: var(--amber-600); color: #fff;
+  font-size: .68rem; font-weight: 700; line-height: 18px; text-align: center;
+  box-shadow: 0 0 0 2px var(--white); pointer-events: none;
+}
+.topbar__badge--danger { background: var(--red-700); }
+.topbar__badge--warn { background: var(--amber-600); }
+
 .navlink__badge { margin-left: auto; background: var(--amber-600); color: #fff; border-radius: 999px; font-size: .7rem; padding: 1px 7px; }
+
+/* 2.7.22 — blocs dépliables du menu ADMINISTRATEUR (« Pharmacie », « Dépôt ») :
+   chevron à droite sur le parent, enfants légèrement indentés et un peu plus
+   petits pour souligner la hiérarchie. */
+.navlink__chevron { margin-left: auto; display: inline-flex; color: #8fc4bf; }
+.sidebar__submenu { margin: 0 0 4px 13px; padding-left: 9px; border-left: 1px solid rgba(255, 255, 255, .16); }
+.navlink--sub { font-size: .86rem; padding: 7px 10px; color: #c2e3df; }
+.navlink--sub:hover { background: rgba(255, 255, 255, .08); }
 
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
@@ -194,6 +219,17 @@ table.data tfoot td { font-weight: 700; background: var(--slate-50); }
 .modal__body { padding: 16px; overflow-y: auto; }
 .modal__foot { padding: 12px 16px; border-top: 1px solid var(--slate-200); display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
 
+/* 2.7.24 — modale « Detail » du dépôt : très grande boîte (quasi plein écran)
+   pour voir TOUTES les données d'un coup, sans défilement horizontal ; le corps
+   prend toute la hauteur disponible et le tableau est compacté pour afficher
+   un maximum de lignes. */
+.modal--detail { width: min(1600px, 97vw); height: 96vh; max-height: 96vh; }
+.modal--detail .modal__body { flex: 1; padding: 8px 12px; }
+.modal--detail .table-scroll { overflow-x: visible; }
+.modal--detail table.data { font-size: .78rem; }
+.modal--detail table.data th, .modal--detail table.data td { padding: 3px 6px; white-space: nowrap; }
+.modal--detail table.data td.wrap { white-space: normal; }
+
 /* --- divers ------------------------------------------------------------- */
 .spinner { width: 22px; height: 22px; border: 3px solid var(--slate-300); border-top-color: var(--teal-700); border-radius: 50%; animation: spin .8s linear infinite; }
 .spinner--page { margin: 60px auto; }
@@ -208,8 +244,7 @@ table.data tfoot td { font-weight: 700; background: var(--slate-50); }
 .list-row { display: flex; gap: 12px; align-items: flex-start; padding: 11px 0; border-bottom: 1px solid var(--slate-200); }
 .list-row:last-child { border-bottom: 0; }
 .list-row__main { flex: 1; min-width: 0; }
-.login-wrap { min-height: 100vh; display: grid; place-items: center; background: linear-gradient(160deg, var(--teal-900), var(--teal-700)); padding: 18px; }
-.login-card { background: var(--white); border-radius: 16px; padding: 26px; width: min(420px, 100%); box-shadow: var(--shadow); }
+
 .pos-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr); gap: 16px; align-items: start; }
 .cart-line { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--slate-200); }
 .counter { display: flex; align-items: center; gap: 4px; }
@@ -253,7 +288,6 @@ table.data tfoot td { font-weight: 700; background: var(--slate-50); }
   .sidebar, .topbar, .mobile-nav, .no-print, .toasts { display: none !important; }
 }
 
-
 /* --- Onglets d'un même métier (Lots/Mouvements, Catalogue…) --- */
 .tabs {
   display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px;
@@ -276,7 +310,6 @@ table.data tfoot td { font-weight: 700; background: var(--slate-50); }
 .choice__item small { color: var(--muted); font-size: .78rem; }
 .choice__item:hover { border-color: var(--brand); }
 .choice__item--active { border-color: var(--brand); box-shadow: inset 0 0 0 1px var(--brand); background: var(--soft); }
-
 
 /* ==========================================================================
    Dépôt & pharmacie — ajustements d'affichage (web et mobile)
@@ -310,4 +343,162 @@ table.data tfoot td { font-weight: 700; background: var(--slate-50); }
   .pill-row .btn { flex: 1 1 auto; }
   .topbar { padding: 8px 10px; }
   .topbar__title span { display: none; }
+}
+
+/* ============================================================
+   Bloc « LOGIN isométrique » — utilisé par frontend/src/pages/LoginPage.jsx
+   (remplace l'ancien design 2.7.26 ; tous les sélecteurs sont préfixés
+   .lp-* → aucun conflit avec les autres pages).
+   ► Rendu SANS DÉFILEMENT : la page prend exactement le viewport, la carte
+     s'adapte (clamp + max-height), les éléments décoratifs se replient sur
+     les écrans bas.
+   ► Réglages rapides :
+     --lp-radius → arrondi des champs   ·  --lp-btn-radius → bouton
+     --lp-input-bg → couleur des champs ·  .lp-page → fond général
+     .lp-card → carte (rayon, ombre, 2 colonnes)
+   ============================================================ */
+:root{
+  --lp-teal-deep:#046680;
+  --lp-acc:#0e8f9b;
+  --lp-input-bg:#dcd6dd;
+  --lp-radius:12px;
+  --lp-btn-radius:12px;
+  --lp-muted:#6b6672;
+}
+
+.lp-page{
+  min-height:100dvh; display:grid; place-items:center; padding:16px;
+  background:
+    radial-gradient(920px 480px at 86% -14%, rgba(255,255,255,.15), transparent 62%),
+    linear-gradient(160deg,#05708c 0%, var(--lp-teal-deep) 55%, #035a73 100%);
+}
+/* Grands écrans : la carte est bornée par la hauteur dispo → zéro scroll. */
+@media (min-width:961px){
+  .lp-page{ height:100dvh; overflow:hidden; }
+  .lp-card{ min-height:min(560px, calc(100dvh - 32px)); }
+}
+.lp-scene{ width:min(1080px,96vw); }
+
+.lp-card{
+  position:relative;
+  background:linear-gradient(115deg,#ffffff 0%,#ffffff 52%,#eefafb 100%);
+  border-radius:14px;
+  box-shadow:0 30px 64px rgba(3,25,23,.42);
+  overflow:hidden;
+  display:grid; grid-template-columns:1.05fr 1fr;
+  max-height:calc(100dvh - 32px);
+  animation:lp-in .3s ease-out;
+}
+@keyframes lp-in{ from{ opacity:0; transform:translateY(12px); } }
+
+/* ---------- Décor SVG ---------- */
+.lp-art{ position:absolute; inset:0; z-index:1; pointer-events:none; }
+.lp-waves{ position:absolute; inset:0; width:100%; height:100%; }
+.lp-iso{
+  position:absolute; right:5%; bottom:4%;
+  width:min(500px,52%); height:auto;
+  filter:drop-shadow(0 16px 20px rgba(4,72,92,.26));
+}
+
+/* ---------- Panneau formulaire ---------- */
+.lp-panel{
+  position:relative; z-index:3;
+  padding:clamp(22px,4.5vh,40px) clamp(24px,3.4vw,46px) clamp(22px,4vh,36px) clamp(30px,4.8vw,72px);
+  display:flex; flex-direction:column; justify-content:center;
+  min-width:0;
+}
+.lp-brand{ display:flex; align-items:center; gap:13px; }
+.lp-brand-ico{ position:relative; width:44px; height:44px; display:grid; place-items:center; color:var(--lp-acc); flex:0 0 auto; }
+.lp-brand-ico::before{ content:""; position:absolute; inset:2px; border:2.5px solid #0e5a70; border-radius:8px; transform:rotate(45deg); }
+.lp-brand-name{ font-size:1.35rem; font-weight:800; color:#1c1b22; line-height:1.05; }
+.lp-brand-name span{ color:var(--lp-acc); }
+.lp-brand-tag{ font-size:.6rem; font-weight:700; letter-spacing:.2em; text-transform:uppercase; color:#12a5b8; margin-top:3px; }
+
+.lp-title-block{ margin-top:clamp(14px,4vh,40px); }
+.lp-panel h1{ font-size:clamp(22px,1.6vw + 12px,31px); color:#1c1b22; letter-spacing:.02em; font-weight:400; margin:0; line-height:1.2; }
+.lp-accent{ color:var(--lp-acc); font-weight:800; }
+.lp-subtitle{ margin:6px 0 0; color:#17b3c6; font-size:.88rem; font-weight:500; }
+
+/* ---------- Bannière d'erreur globale ---------- */
+.lp-erreur{
+  display:flex; align-items:center; gap:9px;
+  margin:14px 0 0; padding:10px 13px; border-radius:10px;
+  background:#fdecea; border:1px solid #f1b7b7; border-left:4px solid var(--red-700);
+  color:#b3261e; font-size:.85rem; font-weight:600; max-width:430px;
+  animation:lp-shake .3s ease;
+}
+.lp-erreur svg{ flex-shrink:0; }
+@keyframes lp-shake{ 0%,100%{ transform:translateX(0); } 25%{ transform:translateX(-5px); } 60%{ transform:translateX(5px); } 85%{ transform:translateX(-2px); } }
+
+/* ---------- Champs ---------- */
+.lp-panel form{ margin-top:clamp(14px,3vh,26px); max-width:430px; }
+.lp-field{ position:relative; margin-bottom:14px; }
+.lp-field input{
+  width:100%; border:0;
+  border-radius:var(--lp-radius);
+  background:var(--lp-input-bg);
+  padding:14px 46px 14px 42px;
+  font-size:.95rem; color:#2b2833; outline:none;
+  transition:box-shadow .18s, background .18s; font-family:inherit;
+}
+.lp-field input::placeholder{ color:#847e8b; font-weight:500; }
+.lp-field input:focus{ background:#e9e4eb; box-shadow:0 0 0 3px rgba(14,179,198,.35); }
+.lp-field--error input{ box-shadow:inset 0 0 0 2px rgba(185,28,28,.55); }
+.lp-field--error input:focus{ box-shadow:inset 0 0 0 2px rgba(185,28,28,.55), 0 0 0 3px rgba(244,63,94,.18); }
+.lp-ico{ position:absolute; left:14px; top:50%; transform:translateY(-50%); color:#7e7887; pointer-events:none; }
+.lp-eye{
+  position:absolute; right:8px; top:50%; transform:translateY(-50%);
+  border:0; background:none; cursor:pointer; padding:7px; border-radius:8px;
+  color:#6f6976; display:grid; place-items:center; min-height:0; width:auto;
+}
+.lp-eye:hover{ color:var(--lp-acc); background:rgba(255,255,255,.5); }
+.lp-field-err{ margin:5px 2px 0; color:var(--red-700); font-size:.78rem; font-weight:600; }
+
+/* État d'erreur d'un champ (règle générique des formulaires, conservée). */
+input.input--error{ border-color:var(--red-700); background:#fffafa; }
+
+.lp-row{ display:flex; justify-content:flex-end; align-items:center; margin:2px 0 18px; font-size:.84rem; }
+.lp-forgot{ color:#35313d; text-decoration:none; font-weight:600; }
+.lp-forgot:hover{ text-decoration:underline; color:var(--lp-acc); }
+
+/* ---------- Bouton ---------- */
+.lp-btn{
+  border:0; cursor:pointer;
+  display:inline-flex; align-items:center; justify-content:center; gap:10px;
+  min-width:210px; min-height:48px; padding:14px 36px;
+  border-radius:var(--lp-btn-radius);
+  color:#fff; font-weight:750; font-size:1rem; letter-spacing:.02em; font-family:inherit;
+  background:linear-gradient(180deg,#3fd6e8,#0aa1c4);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.55), inset 0 -10px 14px rgba(0,64,84,.25), 0 12px 24px rgba(10,161,196,.35);
+  transition:filter .15s, transform .15s;
+}
+.lp-btn:hover:not(:disabled){ filter:brightness(1.06); }
+.lp-btn:active{ transform:translateY(1px); }
+.lp-btn:disabled{ opacity:.75; cursor:wait; }
+.lp-spinner{
+  width:15px; height:15px; border-radius:50%;
+  border:2px solid rgba(255,255,255,.45); border-top-color:#fff;
+  display:inline-block; animation:lp-spin .8s linear infinite;
+}
+@keyframes lp-spin{ to{ transform:rotate(360deg); } }
+
+/* ---------- Note de bas de page ---------- */
+.lp-promo{ display:flex; align-items:flex-start; gap:8px; margin-top:clamp(16px,3.4vh,30px); font-size:.78rem; line-height:1.55; color:var(--lp-muted); max-width:445px; }
+.lp-promo svg{ flex:0 0 auto; margin-top:2px; color:var(--lp-acc); }
+
+/* Écrans peu hauts : on retire le décor de texte → toujours zéro scroll. */
+@media (max-height:640px){
+  .lp-promo{ display:none; }
+  .lp-title-block{ margin-top:10px; }
+}
+
+/* ---------- Mobile : tout s'empile (le scroll redevient normal ici) ---------- */
+@media (max-width:960px){
+  .lp-page{ height:auto; }
+  .lp-card{ grid-template-columns:1fr; min-height:0; max-height:none; }
+  .lp-panel{ padding:26px 22px 30px; }
+  .lp-art{ position:relative; inset:auto; height:230px; margin-top:6px; }
+  .lp-iso{ width:min(380px,74%); right:8%; bottom:6px; }
+  .lp-panel form, .lp-promo{ max-width:100%; }
+  .lp-btn{ width:100%; }
 }

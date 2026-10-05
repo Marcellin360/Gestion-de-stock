@@ -14,6 +14,8 @@ import { navigate, useRoute } from './utils/router.js';
 const LoginPage = lazy(() => import('./pages/LoginPage.jsx'));
 const DashboardPage = lazy(() => import('./pages/DashboardPage.jsx'));
 const SalesPage = lazy(() => import('./pages/SalesPage.jsx'));
+const CalendrierPage = lazy(() => import('./pages/CalendrierPage.jsx'));
+const CalendrierStockPage = lazy(() => import('./pages/CalendrierStockPage.jsx'));
 const DocumentsPage = lazy(() => import('./pages/DocumentsPage.jsx'));
 const StockPage = lazy(() => import('./pages/StockPage.jsx'));
 const InventoriesPage = lazy(() => import('./pages/InventoriesPage.jsx'));
@@ -28,25 +30,46 @@ const SettingsPage = lazy(() => import('./pages/SettingsPage.jsx'));
 
 const PAGES = [
   { route: 'tableau-de-bord', page: DashboardPage, title: 'Tableau de bord' },
-  { route: 'ventes', page: SalesPage, title: 'Ventes', permission: 'sale' },
-  { route: 'documents', page: DocumentsPage, title: 'Documents' },
-  // « Stock » et « Catalogue » regroupent plusieurs écrans en onglets : les
-  // anciennes adresses (#/mouvements, #/categories…) continuent de fonctionner.
+  // 2.7.11 — le menu s'appelle désormais « Vente » ; l'historique détaillé des
+  // ventes s'ouvre depuis le bouton « Historique de vente » de l'écran.
+  { route: 'ventes', page: SalesPage, title: 'Vente', permission: 'sale' },
+  // 2.7.18 — menu « Calendrier des ventes » juste sous « Vente » (page dédiée,
+  // permission 'sale' : la pharmacie la voit, le dépôt — qui ne vend pas — non).
+  { route: 'calendrier', page: CalendrierPage, title: 'Calendrier des ventes', permission: 'sale' },
+  // 2.7.20 — menu « Calendrier des stock » sous « Stock » : entrées/sorties de
+  // la réserve, métier du dépôt (permission 'receipt', comme « Réceptions »).
+  { route: 'calendrier-stock', page: CalendrierStockPage, title: 'Calendrier des stock', permission: 'receipt' },
+  // « Documents » n'est plus un menu (2.7.11) : l'écran reste joignable par
+  // #/documents (annulation d'une pièce, historique complet) ; le dépôt y est
+  // toujours refusé. Les ventes se gèrent depuis « Historique de vente ».
+  { route: 'documents', page: DocumentsPage, title: 'Documents', hideFor: ['DEPOT'] },
+  // L'ancien onglet « Stock » (lots, fiche, mouvements) n'est plus un menu
+  // (2.7.11) : les trois adresses restent ouvertes pour qui les connaît.
   { route: 'lots', page: StockPage, title: 'Stock — lots et quantités', permission: 'documents' },
-  // Fiche de stock (registre : catégorie, unité, initial, entrées, sorties, final,
-  // coût unitaire) : onglet de l'écran Stock, ouvert d'office pour le dépôt.
   { route: 'fiche-stock', page: StockPage, title: 'Stock — fiche de stock', permission: 'documents' },
   { route: 'mouvements', page: StockPage, title: 'Mouvements de stock', permission: 'documents' },
   { route: 'inventaires', page: InventoriesPage, title: 'Inventaires', permission: 'inventory' },
   { route: 'receptions', page: ReceiptsPage, title: 'Réceptions — entrées au dépôt', permission: 'receipt' },
-  { route: 'transferts', page: TransfersPage, title: 'Transferts — dépôt vers pharmacie', permission: 'transfer' },
+  // 2.7.11 — le menu « Transferts dépôt → pharmacie » s'intitule désormais
+  // « Historique de transfert » ; le détail complet reste via « Détail ».
+  { route: 'transferts', page: TransfersPage, title: 'Historique de transfert — dépôt vers pharmacie', permission: 'transfer' },
   { route: 'pertes', page: LossesPage, title: 'Pertes et dons', permission: 'loss' },
+  // 2.7.15 — menu « Catalogue » rétabli pour ADMINISTRATEUR et DÉPÔT (masqué
+  // pour PHARMACIST — son comptoir n'y a pas l'usage), adresses toujours ouvertes.
   { route: 'medicaments', page: CataloguePage, title: 'Catalogue — médicaments', permission: 'reference' },
   { route: 'categories', page: CataloguePage, title: 'Catalogue — catégories', permission: 'reference' },
   { route: 'fournisseurs', page: CataloguePage, title: 'Catalogue — fournisseurs', permission: 'reference' },
-  // Les rapports couvrent la pharmacie et les marges : le profil dépôt n'y a pas accès
-  // (sa fiche de stock est dans l'écran Stock). Ceinture et bretelles avec le menu.
-  { route: 'rapports', page: ReportsPage, title: 'Rapports', permission: 'reports', hideFor: ['DEPOT'] },
+  // 2.7.11 — le menu « Stock » affiche désormais cet écran (fiches de stock,
+  // état, mouvements, ventes et marges…) pour TOUS les profils, y compris le
+  // dépôt : plus de restriction d'adresse.
+  { route: 'rapports', page: ReportsPage, title: 'Stock — rapports et fiches', permission: 'reports' },
+  // 2.7.22 — menu ADMINISTRATEUR « Pharmacie » : la fiche Stock du COMPTOIR a
+  // sa propre adresse (même écran que « Stock », magasin choisi d'après la
+  // route — #/rapports = fiche du dépôt pour l'admin, #/stock-pharmacie =
+  // fiche de la pharmacie ; autres profils : comme avant).
+  { route: 'stock-pharmacie', page: ReportsPage, title: 'Stock (pharmacie) — rapports et fiches', permission: 'reports' },
+  // « Journal d'audit » n'est plus un menu (2.7.11) : joignable par #/audit.
+  // « Catalogue » Y est de nouveau un menu (2.7.15, ADMIN/DEPOT seuls).
   { route: 'audit', page: AuditPage, title: 'Journal d’audit', permission: 'audit' },
   { route: 'utilisateurs', page: UsersPage, title: 'Utilisateurs', permission: 'users' },
   { route: 'parametres', page: SettingsPage, title: 'Paramètres', permission: 'settings' }
@@ -96,8 +119,8 @@ function Routing() {
     return (
       <Layout>
         <Banner tone="warn" title="Accès non autorisé">
-          {target.route === 'rapports' && user.roleCode === 'DEPOT'
-            ? 'Le profil dépôt n’ouvre pas les rapports : sa fiche de stock (catégorie, unité, initial, entrées, sorties, final, coût unitaire) se trouve dans l’écran « Stock ».'
+          {target.route === 'documents' && user.roleCode === 'DEPOT'
+            ? 'Le profil dépôt n’a pas d’écran Documents : ses bons (réceptions, transferts) restent consultables depuis les écrans « Réceptions » et « Historique de transfert », et depuis le tableau de bord.'
             : `Votre profil (${user.roleName}) ne permet pas d’ouvrir cet écran.`}
         </Banner>
       </Layout>

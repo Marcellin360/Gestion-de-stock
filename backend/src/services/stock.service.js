@@ -2,6 +2,11 @@
 // Cœur du stock : disponibilité, sélection des lots (FEFO) et mouvements.
 // Chaque diminution de stock est un mouvement enregistré (RG04) dans la table
 // movements, qui est immuable : on corrige par des mouvements inverses (RG19).
+//
+// 2.7.12 — quantités DÉCIMALES : la vente au détail (plaquette, vongany) sort
+// des fractions de boîte (ex. 0,1 boîte = 1 plaquette d'une boîte de 10).
+// Toute l'arithmétique est faite au 1/1 000 000 près (arrondi 6 décimales,
+// comme le schéma NUMERIC(20,6)) : aucune somme flottante douteuse.
 // ============================================================================
 import { Op } from 'sequelize';
 import { sequelize } from '../config/database.js';
@@ -10,6 +15,11 @@ import { D, money } from '../utils/money.js';
 import { ensure } from '../utils/errors.js';
 import { today } from '../utils/dates.js';
 import { LOT_PICKING, STATUS, VALUATION } from '../config/constants.js';
+
+/** Quantité manipulée à 6 décimales exactes, sans l'arithmétique flottante. */
+export const quantite = valeur => Number(D(valeur).toFixed(6));
+export const quantitePlus = (a, b) => Number(D(a).add(D(b)).toFixed(6));
+export const quantiteMoins = (a, b) => Number(D(a).sub(D(b)).toFixed(6));
 
 /**
  * Stock d'un médicament dans un magasin donné (lots bloqués et expirés inclus).
@@ -44,6 +54,10 @@ export async function lockProductLots(productId, transaction, location = 'PHARMA
  *  - LIFO : priorité au lot reçu le plus récent (méthode conservée, non prioritaire en officine).
  * Un lot bloqué, épuisé, expiré ou sans date d'expiration n'est jamais proposé à la vente,
  * sauf paramétrage explicite « autoriser la vente de lots expirés ».
+ *
+ * 2.7.12 : « quantity » peut être décimale (0,3 boîte = 3 plaquettes) ; les
+ * soustractions sont arrondies 6 décimales pour éviter les reliquats flottants
+ * (0,1 + 0,2 = 0,30000000000000004 qui faisait échouer le contrôle de suffisance).
  */
 export function pickLots(lots, quantity, { date = today(), method = LOT_PICKING.FEFO, allowExpired = false } = {}) {
   const eligible = lots.filter(lot => {
@@ -58,12 +72,12 @@ export function pickLots(lots, quantity, { date = today(), method = LOT_PICKING.
   };
   const sorted = eligible.slice().sort(comparators[method] || comparators.FEFO);
   const picked = [];
-  let remaining = Number(quantity);
+  let remaining = quantite(quantity);
   for (const lot of sorted) {
-    const take = Math.min(remaining, Number(lot.quantity));
+    const take = quantite(Math.min(remaining, Number(lot.quantity)));
     if (take > 0) picked.push({ lot, quantity: take });
-    remaining -= take;
-    if (remaining === 0) break;
+    remaining = quantiteMoins(remaining, take);
+    if (remaining <= 0) { remaining = 0; break; }
   }
   return { picked, missing: remaining };
 }
@@ -92,13 +106,14 @@ export async function applyMovements({ documentType, documentId, userId, kind, r
   const touched = new Map();
   for (const line of lines) {
     const lot = await lockLot(line.lotId, transaction);
-    ensure(Number(lot.quantity) + Number(line.quantity) >= 0,
+    const nouvelleQuantite = quantitePlus(lot.quantity, line.quantity);
+    ensure(nouvelleQuantite >= 0,
       `Stock insuffisant sur le lot ${lot.number} (disponible : ${lot.quantity}).`);
-    await lot.update({ quantity: Number(lot.quantity) + Number(line.quantity) }, { transaction });
+    await lot.update({ quantity: nouvelleQuantite }, { transaction });
     await Movement.create({
       documentType, documentId, productId: line.productId, lotId: lot.id,
       location: line.location ?? lot.location,
-      quantity: Number(line.quantity), unitCost: money(line.unitCost), kind,
+      quantity: quantite(line.quantity), unitCost: money(line.unitCost), kind,
       reason: line.reason ?? reason, userId, createdAt: new Date()
     }, { transaction });
     touched.set(line.productId, (touched.get(line.productId) || 0) + 1);
@@ -114,10 +129,6 @@ export async function applyMovements({ documentType, documentId, userId, kind, r
 export const movementsOf = (documentType, documentId, transaction) =>
   Movement.findAll({ where: { documentType, documentId }, order: [['id', 'DESC']], transaction });
 
-/**
- * Détecte des mouvements postérieurs sur les mêmes médicaments.
- * Empêche d'annuler une opération ancienne qui perturberait un stock déjà chargé (RG19).
- */
 /**
  * Vérifie qu'un document peut être annulé sans casser le stock : chaque ligne
  * à inverser doit pouvoir l'être sur le lot d'origine (jamais de quantité
@@ -141,17 +152,21 @@ export async function ensureReversalPossible(movements, transaction) {
   return true;
 }
 
-/** Contrôle d'intégrité : quantité du lot = somme de ses mouvements (§12). */
+/** Contrôle d'intégrité : quantité du lot = somme de ses mouvements (§12).
+ *  2.7.12 : quantités décimales — comparaison avec une tolérance d'un millionième
+ *  d'unité de gestion (arrondis de conversion plaquette/vongany) et affichage
+ *  arrondi au millième pour rester lisible au registre.
+ */
 export async function integrityReport(transaction) {
   const [rows] = await sequelize.query(`
     SELECT l.id, p.name AS produit, p.code AS code, l.number AS lot, l.location AS magasin,
-           l.quantity::int AS quantite_lot,
-           COALESCE(SUM(m.quantity), 0)::int AS somme_mouvements
+           ROUND(l.quantity, 3) AS quantite_lot,
+           ROUND(COALESCE(SUM(m.quantity), 0), 3) AS somme_mouvements
     FROM lots l
     JOIN products p ON p.id = l.product_id
     LEFT JOIN movements m ON m.lot_id = l.id
     GROUP BY l.id, p.name, p.code, l.number, l.location
-    HAVING l.quantity <> COALESCE(SUM(m.quantity), 0)::int
+    HAVING ABS(l.quantity - COALESCE(SUM(m.quantity), 0)) > 0.000001
     ORDER BY l.id`, { transaction });
   return rows;
 }

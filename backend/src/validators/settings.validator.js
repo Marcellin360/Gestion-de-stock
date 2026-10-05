@@ -12,6 +12,9 @@ export const settingsSchema = z.object({
   managerName: optionalText,
   currency: z.literal('Ar'),
   valuation: z.enum(['LOT', 'CMP'], { errorMap: () => ({ message: 'Valorisation : LOT ou CMP' }) }),
+  // Base du prix de vente : CMP (moyenne des réceptions) ou coût du dernier lot.
+  // Optionnelle : une ancienne version de l'interface peut ne pas l'envoyer.
+  pricingBasis: z.enum(['CMP', 'LOT'], { errorMap: () => ({ message: 'Prix de vente : CMP ou LOT' }) }).optional(),
   marginMode: z.enum(['COST', 'SALE'], { errorMap: () => ({ message: 'Mode de marge : COST (sur coût) ou SALE (sur prix de vente)' }) }),
   minMargin: percent,
   maxMargin: percent,

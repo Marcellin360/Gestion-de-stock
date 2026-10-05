@@ -14,8 +14,13 @@ export function AuthProvider({ children }) {
     (async () => {
       try {
         const session = await auth.me();
+        // Le jeton CSRF de la session en cours est mémorisé ici : sans cette
+        // ligne, un onglet neuf (sessionStorage vide) gardait un jeton vide et
+        // toutes les écritures étaient refusées (« Jeton de sécurité invalide »).
+        setCsrfToken(session.csrf);
         if (vivant) setUser(session.user);
       } catch {
+        setCsrfToken('');
         if (vivant) setUser(null);
       } finally {
         if (vivant) setReady(true);

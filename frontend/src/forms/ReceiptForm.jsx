@@ -144,7 +144,8 @@ export default function ReceiptForm({ onDone, onCancel }) {
                   ))}
                 </Select>
               </Field>
-              <Field label="Numéro de lot" hint="Celui imprimé sur la boîte (proposé automatiquement)">
+              <Field label="Numéro de lot"
+                hint="Celui imprimé sur la boîte (proposé automatiquement). Réutiliser un numéro déjà reçu au même prix complète le lot ; à un autre prix, un second lot est créé automatiquement — la réception passe dans tous les cas.">
                 <Input value={ligne.number} onChange={e => maj(index, { number: e.target.value })} required />
               </Field>
               <Field label="Quantité reçue">

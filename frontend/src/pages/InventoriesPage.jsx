@@ -155,7 +155,7 @@ export default function InventoriesPage() {
           </>}>
           <ErrorBox error={error} />
           <p>Le système fige le stock théorique de chaque lot du magasin choisi à cet instant. Aucun mouvement n’est créé tant que vous n’avez pas validé.</p>
-            {user?.roleCode === 'DEPOT' ? (
+          {user?.roleCode === 'DEPOT' ? (
             <Field label="Magasin à compter" hint="Votre profil travaille sur la réserve : l’inventaire se fait au dépôt.">
               <Input value="Dépôt (réserve)" readOnly />
             </Field>
@@ -204,7 +204,9 @@ export default function InventoriesPage() {
                       <td>{ligne.lotId}</td>
                       <td className="num">{integer(ligne.theoretical)}</td>
                       <td className="num" style={{ minWidth: 110 }}>
-                        <Input type="number" min="0" step="1" value={ligne.physical}
+                        {/* 2.7.12 — décimales permises : après une vente au détail
+                            on compte parfois 8,3 boîtes (8 boîtes + 3 plaquettes). */}
+                        <Input type="number" min="0" step="0.001" value={ligne.physical}
                           onChange={e => {
                             const copie = [...lignes];
                             copie[index] = { ...ligne, physical: e.target.value };

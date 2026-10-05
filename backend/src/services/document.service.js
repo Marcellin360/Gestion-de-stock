@@ -18,7 +18,7 @@ import { log, publicSnapshot } from './audit.service.js';
 export const DOCUMENTS = {
   RECEIPT: { model: Receipt, lineModel: ReceiptLine, foreignKey: 'receiptId', label: 'Réception', lineFields: ['productId', 'lotId', 'quantity', 'purchasePrice', 'allocatedFees', 'unitCost'] },
   TRANSFER: { model: Transfer, lineModel: TransferLine, foreignKey: 'transferId', label: 'Transfert', lineFields: ['productId', 'fromLotId', 'toLotId', 'quantity', 'unitCost'] },
-  SALE: { model: Sale, lineModel: SaleLine, foreignKey: 'saleId', label: 'Vente', lineFields: ['productId', 'lotId', 'quantity', 'unitPrice', 'unitCost', 'marginRate', 'margin'] },
+  SALE: { model: Sale, lineModel: SaleLine, foreignKey: 'saleId', label: 'Vente', lineFields: ['productId', 'lotId', 'quantity', 'saleUnit', 'saleQuantity', 'unitFactor', 'unitPrice', 'unitCost', 'marginRate', 'margin'] },
   LOSS: { model: Loss, lineModel: LossLine, foreignKey: 'lossId', label: 'Perte / don', lineFields: ['productId', 'lotId', 'quantity', 'unitCost'] },
   ADJUSTMENT: { model: Adjustment, lineModel: AdjustmentLine, foreignKey: 'adjustmentId', label: 'Ajustement d’inventaire', lineFields: ['productId', 'lotId', 'quantity', 'unitCost', 'gapReason'] }
 };

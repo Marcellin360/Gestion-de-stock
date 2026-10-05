@@ -24,6 +24,14 @@ export const attributes = {
     marginRate: {type:DataTypes.DECIMAL(5,2),allowNull:false},
     sellingPrice: {type:DataTypes.DECIMAL(20,6),allowNull:false},
     cmp: {type:DataTypes.DECIMAL(20,6),allowNull:false},
+    // 2.7.12 — vente au détail (boîte / plaquette / vongany) :
+    // conditionnement (matetika 10 et 10) et PRIX INDÉPENDANTS de chaque unité.
+    // 0 plaquettes = ce médicament ne se vend pas par plaquette ni par vongany ;
+    // prix 0 = calculé automatiquement au prorata du prix de la boîte à la vente.
+    blistersPerBox: {type:DataTypes.INTEGER,allowNull:false,defaultValue:10},
+    unitsPerBlister: {type:DataTypes.INTEGER,allowNull:false,defaultValue:10},
+    pricePerBlister: {type:DataTypes.DECIMAL(20,6),allowNull:false,defaultValue:0},
+    pricePerUnit: {type:DataTypes.DECIMAL(20,6),allowNull:false,defaultValue:0},
     version: {type:DataTypes.INTEGER,allowNull:false,defaultValue:0},
     createdAt: {type:DataTypes.DATE,allowNull:false,defaultValue:DataTypes.NOW},
     updatedAt: {type:DataTypes.DATE,allowNull:false,defaultValue:DataTypes.NOW}

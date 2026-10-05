@@ -31,6 +31,75 @@ function validateDates(line) {
 }
 
 /**
+ * Retrouve (ou crée) le lot d'une ligne de réception.
+ *
+ * Un même numéro de lot revient forcément : une officine commande le même
+ * médicament au même grossiste plusieurs fois dans l'année, et le numéro suggéré
+ * (MED-001-2026) est le même. La règle est donc :
+ *
+ *   • lot inexistant                    → création du lot (dates et prix saisis) ;
+ *   • lot existant, mêmes dates ET même prix → la quantité est simplement
+ *     complétée (c'est le même lot physique, livré en deux fois) ;
+ *   • lot existant, prix ou dates différends → un lot DISTINCT est créé pour le
+ *     même numéro, suffixé « ·2 », « ·3 »… Aucune réception n'est refusée pour un
+ *     numéro réutilisé, et les coûts restent séparés (donc le CMP reste juste).
+ *
+ * Chaque décision est renvoyée dans « ajustements » pour être affichée après
+ * enregistrement (« lot MED-001-2026 déjà reçu à 1 000 Ar : enregistré comme
+ * MED-001-2026·2 »).
+ */
+async function resoudreLot({ produit, supplierId, location, ligne, transaction, ajustements }) {
+  const base = String(ligne.number).trim();
+  for (let rang = 1; rang <= 99; rang += 1) {
+    const numero = rang === 1 ? base : `${base}·${rang}`;
+    const existant = await Lot.findOne({
+      where: { productId: produit.id, supplierId, number: numero, location },
+      transaction, lock: transaction.LOCK.UPDATE
+    });
+
+    if (!existant) {
+      const cree = await Lot.create({
+        productId: produit.id, supplierId, number: numero, location,
+        receivedOn: ligne.receivedOn, manufacturedOn: ligne.manufacturedOn, expiresOn: ligne.expiresOn,
+        quantity: 0, receivedQuantity: ligne.quantity,
+        purchasePrice: money(ligne.purchasePrice), allocatedFees: ligne.allocatedFees,
+        unitCost: ligne.unitCost, status: STATUS.AVAILABLE
+      }, { transaction });
+      if (rang > 1) {
+        ajustements.push({
+          numeroDemande: base, numeroUtilise: numero, motif: 'autrePrix',
+          message: `Le lot « ${base} » existe déjà (prix ou dates différents) : la livraison a été enregistrée `
+            + `comme lot « ${numero} » pour garder les deux coûts séparés.`
+        });
+      }
+      return cree;
+    }
+
+    ensure(existant.status === STATUS.AVAILABLE, `Lot ${numero} bloqué : lever le blocage avant de le compléter.`);
+    const memesDates = existant.expiresOn === ligne.expiresOn && existant.manufacturedOn === ligne.manufacturedOn;
+    const memePrix = D(existant.purchasePrice).eq(ligne.purchasePrice);
+
+    if (memesDates && memePrix) {
+      // Même lot physique livré en deux fois : les quantités s'additionnent et le
+      // coût de revient est recalculé sur l'ensemble :
+      //   coût unitaire = prix d'achat + (frais cumulés ÷ quantité cumulée)
+      // (l'ancienne formule divisait aussi le PRIX D'ACHAT par la quantité, ce qui
+      // écrasait le coût : un lot de 100 + 50 unités à 1 000 Ar tombait à 6,67 Ar.)
+      const totalQuantite = Number(existant.receivedQuantity) + Number(ligne.quantity);
+      const totalFrais = D(existant.allocatedFees).add(ligne.allocatedFees);
+      await existant.update({
+        receivedQuantity: totalQuantite,
+        allocatedFees: money(totalFrais),
+        unitCost: money(D(existant.purchasePrice).add(totalFrais.div(totalQuantite)))
+      }, { transaction });
+      return existant;
+    }
+    // Prix ou dates différents : on essaie le numéro suffixé suivant.
+  }
+  throw new Error(`Lot ${base} : trop de livraisons au même numéro (99). Utilisez un numéro de lot distinct.`);
+}
+
+/**
  * Enregistre une réception.
  * L'idempotence vient de requestKey : un double clic ou un réseau instable
  * ne peut pas créer deux réceptions ni doubler le stock.
@@ -68,6 +137,8 @@ export async function createReceipt(payload, user, transaction) {
 
   const movementLines = [];
   const touchedProducts = new Set();
+  // Numéros de lot réutilisés : la liste est renvoyée à l'écran après enregistrement.
+  const ajustements = [];
   let costTotal = D(0);
 
   for (const line of lines) {
@@ -75,37 +146,15 @@ export async function createReceipt(payload, user, transaction) {
     ensure(product, `Médicament introuvable (ligne ${line.number}).`, 404);
     ensure(product.active, `Médicament « ${product.name} » inactif : réception refusée.`);
 
-    // Un lot identique (même médicament, même fournisseur, même numéro, même magasin)
-    // est complété, mais uniquement si dates et coûts concordent : sinon la réception
-    // est refusée (un numéro de lot mal recopié doit se voir tout de suite).
-    let lot = await Lot.findOne({
-      where: { productId: product.id, supplierId: payload.supplierId, number: line.number, location },
-      transaction, lock: transaction.LOCK.UPDATE
+    // Même numéro de lot, nouvelle livraison à un autre prix : un lot distinct est
+    // créé automatiquement (voir resoudreLot) — la réception n'est jamais refusée.
+    const lot = await resoudreLot({
+      produit: product, supplierId: payload.supplierId, location, ligne: line, transaction, ajustements
     });
-    if (lot) {
-      ensure(lot.status === STATUS.AVAILABLE, `Lot ${line.number} bloqué : lever le blocage avant de le compléter.`);
-      ensure(lot.expiresOn === line.expiresOn && lot.manufacturedOn === line.manufacturedOn,
-        `Lot ${line.number} déjà enregistré avec d'autres dates. Vérifier le numéro de lot ou créer le lot avec une référence distincte.`);
-      ensure(D(lot.purchasePrice).eq(line.purchasePrice),
-        `Lot ${line.number} déjà enregistré à un autre prix d'achat (${lot.purchasePrice}). Traiter séparément.`);
-      await lot.update({
-        receivedQuantity: Number(lot.receivedQuantity) + Number(line.quantity),
-        allocatedFees: money(D(lot.allocatedFees).add(line.allocatedFees)),
-        unitCost: money(D(lot.purchasePrice).add(D(lot.allocatedFees).add(line.allocatedFees)).div(Number(lot.receivedQuantity) + Number(line.quantity)))
-      }, { transaction });
-    } else {
-      lot = await Lot.create({
-        productId: product.id, supplierId: payload.supplierId, number: line.number, location,
-        receivedOn: line.receivedOn, manufacturedOn: line.manufacturedOn, expiresOn: line.expiresOn,
-        quantity: 0, receivedQuantity: line.quantity,
-        purchasePrice: money(line.purchasePrice), allocatedFees: line.allocatedFees,
-        unitCost: line.unitCost, status: STATUS.AVAILABLE
-      }, { transaction });
-    }
 
     await ReceiptLine.create({
       receiptId: receipt.id, productId: product.id, lotId: lot.id,
-      number: line.number, quantity: line.quantity, purchasePrice: money(line.purchasePrice),
+      number: lot.number, quantity: line.quantity, purchasePrice: money(line.purchasePrice),
       allocatedFees: line.allocatedFees, unitCost: line.unitCost,
       receivedOn: line.receivedOn, expiresOn: line.expiresOn, manufacturedOn: line.manufacturedOn
     }, { transaction });
@@ -130,6 +179,8 @@ export async function createReceipt(payload, user, transaction) {
   }
 
   await receipt.update({ reference: makeReference('RECEIPT', receipt.id), costTotal: money(costTotal) }, { transaction });
+  // Propriété calculée (jamais écrite en base) : l'écran l'affiche après l'enregistrement.
+  receipt.ajustements = ajustements;
 
   await log({
     userId: user.id, action: 'VALIDATE', entity: 'RECEIPT', entityId: receipt.id,

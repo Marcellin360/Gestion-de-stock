@@ -1,5 +1,13 @@
 // Catalogue des médicaments : identification, coût retenu, prix de vente,
 // stock par produit et modification du taux de marge (RG22, RG23).
+//
+// Prix de vente et profils (2.7.9) :
+//   • TOUS les profils voient le prix calculé — y compris le dépôt (il sert aux
+//     étiquettes et à renseigner le comptoir) : le serveur ne le masque plus,
+//     la colonne affiche le prix dès qu'il est reçu, jamais un faux « 0 Ar » ;
+//   • seuls les profils autorisés (`prices`) peuvent CHANGER le taux : le bouton
+//     « % » leur est réservé — le serveur refuserait un autre profil
+//     (RG24 : la modification reste tracée dans l'historique des prix).
 import { useMemo, useState } from 'react';
 import { Plus, Pencil, Percent, History, Ban, Check } from 'lucide-react';
 import { useData } from '../context/DataContext.jsx';
@@ -14,11 +22,18 @@ import { referentials } from '../api/endpoints.js';
 export default function ProductsPage() {
   const { products, stockByProduct, categoryName, settings, refresh, productName } = useData();
   const { can } = useAuth();
+  // La MODIFICATION du taux de marge reste réservée aux profils autorisés (RG24) :
+  // le serveur refuse les autres (403), donc on ne leur montre pas le bouton « % ».
+  // La LECTURE du prix, elle, est ouverte à tous les profils depuis la 2.7.9.
+  const peutVoirPrix = can('prices');
   const toast = useToast();
   const [filtres, setFiltres] = useState({ terme: '', categorie: '', etat: 'actifs' });
   const [edition, setEdition] = useState(null);
   const [marge, setMarge] = useState(null);
   const [historique, setHistorique] = useState(null);
+  // 2.7.10 — la désactivation/réactivation d'un médicament demande une
+  // confirmation explicite (la fiche disparaît des ventes et réceptions).
+  const [confirmation, setConfirmation] = useState(null);
   const [error, setError] = useState(null);
 
   const lignes = useMemo(() => products.filter(produit => {
@@ -45,8 +60,21 @@ export default function ProductsPage() {
   const basculerActivation = async produit => {
     setError(null);
     try {
-      await referentials.update('products', produit.id, { ...produit, active: !produit.active });
+      // On n'envoie QUE les champs de la fiche : renvoyer l'objet complet
+      // (id, createdAt, cmp, sellingPrice…) était refusé par le serveur.
+      await referentials.update('products', produit.id, {
+        name: produit.name,
+        presentation: produit.presentation || '',
+        categoryId: produit.categoryId ? Number(produit.categoryId) : null,
+        unit: produit.unit,
+        minStock: Number(produit.minStock || 0),
+        maxStock: produit.maxStock === null || produit.maxStock === undefined ? null : Number(produit.maxStock),
+        note: produit.note || '',
+        active: !produit.active,
+        marginRate: Number(produit.marginRate)
+      });
       toast.success(produit.active ? 'Médicament désactivé.' : 'Médicament réactivé.');
+      setConfirmation(null);
       await refresh();
     } catch (cause) {
       setError(cause);
@@ -84,7 +112,8 @@ export default function ProductsPage() {
             { label: 'Code' }, { label: 'Médicament' }, { label: 'Catégorie' },
             { label: 'Stock', num: true },
             ...(can(['prices', 'costs']) ? [{ label: 'CMP', num: true }, { label: 'Taux', num: true }] : []),
-            { label: 'Prix de vente', num: true }, { label: 'Seuil', num: true }, { label: '' }
+            { label: 'Prix de vente', num: true },
+            { label: 'Seuil', num: true }, { label: '' }
           ]}>
             {lignes.map(produit => {
               const stock = stockByProduct(produit.id);
@@ -103,14 +132,23 @@ export default function ProductsPage() {
                   <td className="num">{integer(stock)}{alerte ? <Badge tone="danger">seuil</Badge> : null}</td>
                   {can(['prices', 'costs']) ? <td className="num">{money(produit.cmp)}</td> : null}
                   {can(['prices', 'costs']) ? <td className="num">{percent(produit.marginRate)}</td> : null}
-                  <td className="num">{money(produit.sellingPrice)}</td>
+                  <td className="num">
+                    {/* 2.7.9 — le prix de vente est visible par tous les profils (le dépôt
+                        en a besoin pour les étiquettes) ; il vient du serveur, jamais
+                        d'un « 0 Ar » affiché en guise de valeur masquée. */}
+                    {produit.sellingPrice !== null && produit.sellingPrice !== undefined ? (
+                      money(produit.sellingPrice)
+                    ) : (
+                      <span className="muted">—</span>
+                    )}
+                  </td>
                   <td className="num">{integer(produit.minStock)}</td>
                   <td className="right nowrap">
                     {can('reference') ? <Btn variant="ghost" icon={Pencil} onClick={() => setEdition(produit)} aria-label="Modifier" /> : null}
-                    {can(['prices', 'costs']) ? <Btn variant="ghost" icon={Percent} onClick={() => setMarge(produit)} aria-label="Taux de marge" /> : null}
+                    {peutVoirPrix ? <Btn variant="ghost" icon={Percent} onClick={() => setMarge(produit)} aria-label="Taux de marge" /> : null}
                     <Btn variant="ghost" icon={History} onClick={() => voirHistorique(produit)} aria-label="Historique des prix" />
                     {can('reference') ? (
-                      <Btn variant="ghost" icon={produit.active ? Ban : Check} onClick={() => basculerActivation(produit)}
+                      <Btn variant="ghost" icon={produit.active ? Ban : Check} onClick={() => setConfirmation(produit)}
                         aria-label={produit.active ? 'Désactiver' : 'Réactiver'} />
                     ) : null}
                   </td>
@@ -122,6 +160,8 @@ export default function ProductsPage() {
         <p className="muted" style={{ fontSize: '.82rem', marginTop: 10 }}>
           Un médicament n’est jamais supprimé : il est désactivé pour rester lisible dans l’historique (RG19).
           Mode de marge actuel : {settings.marginMode === 'SALE' ? 'sur le prix de vente' : 'sur le coût d’achat'}.
+          {' Le prix de vente est calculé par le logiciel : il découle du coût retenu et du taux de marge.'}
+          {peutVoirPrix ? '' : ' Seuls les postes autorisés peuvent modifier le taux (« % ») : la lecture du prix, elle, est ouverte à tous.'}
         </p>
       </Card>
 
@@ -132,6 +172,30 @@ export default function ProductsPage() {
             setEdition(null);
             await refresh();
           }} />
+        </Modal>
+      ) : null}
+
+      {confirmation ? (
+        <Modal title={confirmation.active ? 'Désactiver ce médicament ?' : 'Réactiver ce médicament ?'}
+          onClose={() => setConfirmation(null)}
+          footer={<>
+            <Btn variant="ghost" onClick={() => setConfirmation(null)}>Renoncer</Btn>
+            <Btn variant={confirmation.active ? 'danger' : 'primary'} onClick={() => basculerActivation(confirmation)}>
+              {confirmation.active ? 'Oui, désactiver' : 'Oui, réactiver'}
+            </Btn>
+          </>}>
+          {confirmation.active ? (
+            <p>
+              <strong>{confirmation.name}</strong> ({confirmation.code}) ne sera plus proposé dans les ventes,
+              les réceptions ni les transferts. Son stock et son historique restent visibles ; il pourra être
+              réactivé à tout moment. La désactivation d'un médicament n'efface jamais de données.
+            </p>
+          ) : (
+            <p>
+              <strong>{confirmation.name}</strong> ({confirmation.code}) redeviendra disponible dans les ventes,
+              les réceptions et les transferts.
+            </p>
+          )}
         </Modal>
       ) : null}
 
@@ -149,13 +213,17 @@ export default function ProductsPage() {
         <Modal title={`Historique des prix — ${historique.produit.name}`} onClose={() => setHistorique(null)} wide
           footer={<Btn variant="ghost" onClick={() => setHistorique(null)}>Fermer</Btn>}>
           {historique.liste.length === 0 ? <Empty>Aucun changement de prix enregistré.</Empty> : (
-            <Table columns={[{ label: 'Date' }, { label: 'Coût' }, { label: 'Ancien taux' }, { label: 'Nouveau taux' }, { label: 'Prix', num: true }, { label: 'Motif' }]}>
+            /* Une ligne = un prix calculé : le coût retenu et le taux qui l'ont
+               produit. (« Ancien taux » n'existe pas dans la base : l'ancien taux
+               figure sur la ligne précédente — afficher 0 % serait faux.) */
+            <Table columns={[{ label: 'Date' }, { label: 'Coût retenu' }, { label: 'Taux' },
+              { label: 'Mode' }, { label: 'Prix de vente', num: true }, { label: 'Motif' }]}>
               {historique.liste.map(entree => (
                 <tr key={entree.id}>
                   <td>{new Date(entree.createdAt).toLocaleString('fr-FR')}</td>
                   <td>{money(entree.cost)}</td>
-                  <td>{percent(entree.previousRate)}</td>
                   <td>{percent(entree.rate)}</td>
+                  <td>{entree.mode === 'SALE' ? 'sur le prix de vente' : 'sur le coût d’achat'}</td>
                   <td className="num">{money(entree.price)}</td>
                   <td className="wrap">{entree.reason}</td>
                 </tr>

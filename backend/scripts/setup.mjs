@@ -297,10 +297,10 @@ if (dbOnly) {
     const genere = motDePasseAleatoire(16);
     motDePasseAdministrateur = nonInteractif
       ? genere
-      : await demanderMotDePasse('Mot de passe du premier administrateur (Entrée = généré automatiquement, 12 caractères minimum)', genere);
+      : await demanderMotDePasse('Mot de passe du premier administrateur (Entrée = généré automatiquement, 4 caractères minimum)', genere);
   }
-  if (motDePasseAdministrateur.length < 12) {
-    console.error(`\n${c.r} Le mot de passe administrateur doit contenir au moins 12 caractères.${c.f}\n`);
+  if (motDePasseAdministrateur.length < 4) {
+    console.error(`\n${c.r} Le mot de passe administrateur doit contenir au moins 4 caractères.${c.f}\n`);
     process.exit(1);
   }
 

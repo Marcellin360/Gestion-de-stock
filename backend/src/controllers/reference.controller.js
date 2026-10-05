@@ -3,16 +3,35 @@
 // Création, modification, désactivation (jamais de suppression : traçabilité),
 // contrôle de la plage de marge (RG22) et historique des prix (RG23, RG24).
 // ============================================================================
-import { Category, Supplier, Product } from '../models/index.js';
+import { Category, Supplier, Product, Receipt, Lot } from '../models/index.js';
 import { read, write } from '../utils/transaction.js';
 import { ensure } from '../utils/errors.js';
 import { D } from '../utils/money.js';
 import { log, publicSnapshot } from '../services/audit.service.js';
 import { changeMarginRate, priceHistory, assertMarginRate } from '../services/pricing.service.js';
 import { getSettings } from '../services/settings.service.js';
+import { prochainCodeProduit, prochainCodeBarres } from '../services/codes.service.js';
 
 const MODELS = { categories: Category, suppliers: Supplier, products: Product };
 const ENTITY = { categories: 'CATEGORY', suppliers: 'SUPPLIER', products: 'PRODUCT' };
+
+/**
+ * Nom automatique d'un fournisseur créé sans raison sociale.
+ * On part de ce que l'utilisateur a bien voulu donner (personne à contacter,
+ * puis téléphone) ; à défaut, « Fournisseur 4 », « Fournisseur 5 »… en évitant
+ * les numéros déjà pris. Le nom reste modifiable ensuite par le crayon.
+ */
+async function nomFournisseurAuto(values, transaction) {
+  const propose = String(values.contact || '').trim() || String(values.phone || '').trim();
+  if (propose) return propose;
+  const total = await Supplier.count({ transaction });
+  for (let numero = total + 1; numero < total + 1000; numero += 1) {
+    const nom = `Fournisseur ${numero}`;
+    const pris = await Supplier.count({ where: { name: nom }, transaction });
+    if (!pris) return nom;
+  }
+  return `Fournisseur ${Date.now()}`;
+}
 
 const modelOf = resource => {
   const model = MODELS[resource];
@@ -28,10 +47,18 @@ export async function create(req, res) {
     if (resource === 'products') {
       const settings = await getSettings(transaction);
       assertMarginRate(values.marginRate, settings.toJSON());
+      // Code interne et code-barres : attribués par le logiciel (jamais saisis à
+      // la main). Un import de fichier peut encore les fournir : dans ce cas la
+      // valeur reçue est conservée.
+      values.code = values.code ? String(values.code).trim() : await prochainCodeProduit(transaction);
+      values.barcode = values.barcode ? String(values.barcode).trim() : await prochainCodeBarres(transaction);
       values.cmp = '0.000000';
       values.sellingPrice = '0.000000';
       values.version = 0;
       values.updatedAt = new Date();
+    }
+    if (resource === 'suppliers' && !String(values.name || '').trim()) {
+      values.name = await nomFournisseurAuto(values, transaction);
     }
     const created = await model.create({ ...values, createdAt: new Date() }, { transaction });
     await log({
@@ -51,10 +78,12 @@ export async function update(req, res) {
     ensure(current, 'Élément introuvable.', 404);
     const before = current.toJSON();
     const values = { ...req.body };
-    // Les valeurs calculées ne sont jamais modifiables directement par l'interface.
-    delete values.cmp;
-    delete values.sellingPrice;
-    delete values.version;
+    // Les valeurs calculées ne sont jamais modifiables directement par l'interface,
+    // et les identifiants/horodatages renvoyés par un écran sont ignorés (le schéma
+    // les accepte pour éviter un refus « champ inconnu », on les retire ici).
+    for (const technique of ['id', 'createdAt', 'updatedAt', 'cmp', 'sellingPrice', 'version']) {
+      delete values[technique];
+    }
 
     if (resource === 'products') {
       const settings = await getSettings(transaction);
@@ -71,6 +100,10 @@ export async function update(req, res) {
       values.updatedAt = new Date();
     }
 
+    if (resource === 'suppliers' && !String(values.name || '').trim()) {
+      values.name = current.name; // le nom n'est jamais vidé : on garde celui en place
+    }
+
     await current.update(values, { transaction });
     await log({
       userId: req.user.id, action: 'UPDATE', entity: ENTITY[resource], entityId: current.id,
@@ -79,6 +112,43 @@ export async function update(req, res) {
     return current;
   });
   res.json(record);
+}
+
+/**
+ * Suppression d'un fournisseur (bouton corbeille de la liste).
+ *
+ * Deux garde-fous, dans cet ordre :
+ *   • seuls les FOURNISSEURS peuvent être supprimés — un médicament ou une
+ *     catégorie est cité par l'historique des mouvements, on les désactive ;
+ *   • un fournisseur qui a déjà livré (réceptions ou lots enregistrés) n'est
+ *     jamais supprimé : sinon les rapports d'achat deviendraient illisibles.
+ *     Le message explique alors qu'il faut décocher « Fournisseur actif ».
+ */
+export async function remove(req, res) {
+  const resource = req.params.resource;
+  ensure(resource === 'suppliers',
+    'Seuls les fournisseurs peuvent être supprimés : les médicaments et les catégories sont cités par l’historique de stock.', 403);
+  const id = Number(req.params.id);
+
+  await write(async transaction => {
+    const fournisseur = await modelOf(resource).findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
+    ensure(fournisseur, 'Fournisseur introuvable.', 404);
+
+    const receptions = await Receipt.count({ where: { supplierId: id }, transaction });
+    const lots = await Lot.count({ where: { supplierId: id }, transaction });
+    ensure(receptions === 0 && lots === 0,
+      `Suppression impossible : « ${fournisseur.name} » a déjà servi (${receptions} réception(s), ${lots} lot(s)). `
+      + 'Décochez « Fournisseur actif » dans sa fiche : il disparaît des listes de choix sans toucher à l’historique.');
+
+    const before = publicSnapshot(fournisseur.toJSON());
+    await log({
+      userId: req.user.id, action: 'DELETE', entity: ENTITY[resource], entityId: id,
+      before, ip: req.ip
+    }, transaction);
+    await fournisseur.destroy({ transaction });
+  });
+
+  res.json({ ok: true, message: 'Fournisseur supprimé.' });
 }
 
 /** Modification du taux de marge : recalcul du prix de vente et trace (RG23, RG24). */

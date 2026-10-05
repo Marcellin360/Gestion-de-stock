@@ -6,6 +6,9 @@ import { LOSS_REASONS } from '../config/constants.js';
 export const identifier = z.number().int().positive().max(2147483647);
 export const quantity = z.number().int().positive().max(1000000);
 export const positiveQuantity = z.number().int().min(0).max(1000000);
+// 2.7.12 — quantité DÉCIMALE autorisée (inventaire après ventes au détail :
+// on peut compter 8,3 boîtes quand 3 plaquettes ont été vendues sur 10).
+export const positiveDecimalQuantity = z.number().min(0, 'Quantité négative interdite').max(1000000);
 export const signedQuantity = z.number().int().min(-1000000).max(1000000).refine(v => v !== 0, 'Quantité nulle interdite.');
 export const amount = z.union([
   z.string().regex(/^\d{1,14}(\.\d{1,6})?$/, 'Montant attendu (nombre positif, 6 décimales maximum)'),
