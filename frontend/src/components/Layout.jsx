@@ -5,7 +5,8 @@ import {
   LayoutDashboard, ShoppingCart, Boxes, CalendarDays,
   ArrowRightLeft, PackagePlus, PackageMinus, Pill, Warehouse,
   ChevronDown, ChevronRight,
-  Users, Settings as SettingsIcon, Menu, Bell, LogOut, KeyRound, WifiOff
+  Users, Settings as SettingsIcon, Menu, Bell, LogOut, KeyRound, WifiOff, ClipboardCheck,
+  Hospital, History
 } from 'lucide-react';
 import { navigate, useRoute } from '../utils/router.js';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -33,10 +34,22 @@ const NAV = [
     { route: 'ventes', label: 'Vente', icon: ShoppingCart, permission: 'sale' },
     // 2.7.18 — le suivi des ventes a SON MENU, juste sous « Vente » (le
     // calendrier a quitté le tableau de bord ; celui-ci garde l'histogramme).
-    { route: 'calendrier', label: 'Calendrier des ventes', icon: CalendarDays, permission: 'sale' }
+    { route: 'calendrier', label: 'Calendrier des ventes', icon: CalendarDays, permission: 'sale' },
+    // 2.7.36 — l'historique de vente a SON MENU, juste SOUS « Vente » : il se
+    // partage en clients tsotra (passage) et clients hôpital (patients), les
+    // deux avec recherche, détail et ordonnance de séjour téléchargeable.
+    { route: 'historique-ventes', label: 'Historique de vente', icon: History, permission: 'sale' },
+    // 2.7.35 — hôpital : patients hospitalisés, carnet prescripteur (médecins
+    // et sages-femmes), tour de garde de la semaine, activité d'un médecin.
+    { route: 'patients', label: 'Hôpital (carnets)', icon: Hospital, permission: 'sale', hideFor: ['DEPOT'] }
   ] },
   { group: 'Magasins', items: [
     { route: 'rapports', label: 'Stock', icon: Boxes, permission: 'reports' },
+    // 2.7.34 — teboka ⑦ : le menu « Inventaire » revient explicitement pour le
+    // DÉPÔT (inventaire périodique : comptage physique des lots de la réserve,
+    // écarts justifiés sur la fiche, date du dernier inventaire visible ; il
+    // était joignable par #/inventaires mais ne figurait plus au menu).
+    { route: 'inventaires', label: 'Inventaire', icon: ClipboardCheck, permission: 'inventory', hideFor: ['PHARMACIST'] },
     // 2.7.20/2.7.21 — « Calendrier des stock » : suivi J/J des entrées (réceptions)
     // et sorties (transferts) de la RÉSERVE, placé sous « Stock » — ouvert au
     // DÉPÔT et à l'ADMINISTRATEUR (masqué pour la pharmacie seule).
@@ -70,13 +83,21 @@ const NAV = [
 // ============================================================================
 const SOUS_MENUS_PHARMACIE = [
   { route: 'ventes', label: 'Vente', icon: ShoppingCart, permission: 'sale' },
+  // 2.7.36 — menu « Historique de vente » juste SOUS « Vente » (2 onglets :
+  // clients tsotra / clients hôpital) ; l'admin garde ses 5 menus en haut.
+  { route: 'historique-ventes', label: 'Historique de vente', icon: History, permission: 'sale' },
   { route: 'calendrier', label: 'Calendrier des ventes', icon: CalendarDays, permission: 'sale' },
+  // 2.7.35 — hôpital : carnets (patients + prescripteurs + TDR) dans le bloc
+  // « Pharmacie » : l'administrateur garde ses 5 menus en haut (souhait 2.7.22).
+  { route: 'patients', label: 'Hôpital (carnets)', icon: Hospital, permission: 'sale' },
   { route: 'stock-pharmacie', label: 'Stock (pharmacie)', icon: Boxes, permission: 'reports' },
   { route: 'pertes', label: 'Pertes et dons', icon: PackageMinus, permission: 'loss' },
   { route: 'transferts', label: 'Historique de transfert', icon: ArrowRightLeft, permission: 'transfer' }
 ];
 const SOUS_MENUS_DEPOT = [
   { route: 'rapports', label: 'Stock (dépôt)', icon: Boxes, permission: 'reports' },
+  // Teboka ⑦ : l'administrateur retrouve l'Inventaire dans le bloc « Dépôt ».
+  { route: 'inventaires', label: 'Inventaire', icon: ClipboardCheck, permission: 'inventory' },
   { route: 'calendrier-stock', label: 'Calendrier des stock', icon: CalendarDays, permission: 'receipt' },
   { route: 'receptions', label: 'Réceptions', icon: PackagePlus, permission: 'receipt' },
   { route: 'transferts', label: 'Historique de transfert', icon: ArrowRightLeft, permission: 'transfer' },
@@ -325,7 +346,8 @@ export default function Layout({ children }) {
             <Btn variant="primary" icon={LogOut} onClick={logout}>Oui, me déconnecter</Btn>
           </>}>
           <p>
-            La session de <strong>{user?.name}</strong> sera fermée sur ce poste.
+            La session de <strong>{user?.name}</strong> sera fermée sur ce poste. Vérifiez qu'aucune vente
+            ni réception n'est en cours de saisie dans un formulaire ouvert.
           </p>
         </Modal>
       ) : null}

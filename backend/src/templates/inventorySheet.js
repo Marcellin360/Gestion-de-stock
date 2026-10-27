@@ -6,6 +6,9 @@ export function inventorySheet({ inventory, lines, pharmacy, products, lots, use
   const body = table([
     { label: 'Médicament', render: line => `<strong>${escapeHtml(products.find(p => p.id === line.productId)?.name || '')}</strong>` },
     { label: 'Lot', render: line => escapeHtml(lots.find(l => l.id === line.lotId)?.number || '') },
+    // Teboka ⑦ — « l'inventaire contient ce qui est reçu » : la date de
+    // réception de chaque lot est sur la feuille (reconnaissance du paquet compté).
+    { label: 'Réception (reçu le)', render: line => escapeHtml(formatDate(lots.find(l => l.id === line.lotId)?.receivedOn)) },
     { label: 'Expiration', render: line => escapeHtml(formatDate(lots.find(l => l.id === line.lotId)?.expiresOn)) },
     { label: 'Stock théorique', align: 'right', render: line => line.theoretical },
     { label: 'Comptage 1', align: 'right', render: () => '&nbsp;' },

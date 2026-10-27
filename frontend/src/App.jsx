@@ -14,6 +14,8 @@ import { navigate, useRoute } from './utils/router.js';
 const LoginPage = lazy(() => import('./pages/LoginPage.jsx'));
 const DashboardPage = lazy(() => import('./pages/DashboardPage.jsx'));
 const SalesPage = lazy(() => import('./pages/SalesPage.jsx'));
+const HistoriqueVentesPage = lazy(() => import('./pages/HistoriqueVentesPage.jsx'));
+const PatientsPage = lazy(() => import('./pages/PatientsPage.jsx'));
 const CalendrierPage = lazy(() => import('./pages/CalendrierPage.jsx'));
 const CalendrierStockPage = lazy(() => import('./pages/CalendrierStockPage.jsx'));
 const DocumentsPage = lazy(() => import('./pages/DocumentsPage.jsx'));
@@ -36,6 +38,12 @@ const PAGES = [
   // 2.7.18 — menu « Calendrier des ventes » juste sous « Vente » (page dédiée,
   // permission 'sale' : la pharmacie la voit, le dépôt — qui ne vend pas — non).
   { route: 'calendrier', page: CalendrierPage, title: 'Calendrier des ventes', permission: 'sale' },
+  // 2.7.36 — menu « Historique de vente » sous « Vente » : 2 onglets (clients
+  // tsotra / clients hôpital), recherche + détail + ordonnance de séjour.
+  { route: 'historique-ventes', page: HistoriqueVentesPage, title: 'Historique de vente', permission: 'sale' },
+  // 2.7.35 — hôpital : patients hospitalisés + carnet prescripteur (médecins,
+  // sages-femmes), tour de garde de la semaine et activité d'un prescripteur.
+  { route: 'patients', page: PatientsPage, title: 'Hôpital — carnets et tour de garde', permission: 'sale' },
   // 2.7.20 — menu « Calendrier des stock » sous « Stock » : entrées/sorties de
   // la réserve, métier du dépôt (permission 'receipt', comme « Réceptions »).
   { route: 'calendrier-stock', page: CalendrierStockPage, title: 'Calendrier des stock', permission: 'receipt' },

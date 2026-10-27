@@ -16,7 +16,9 @@ export const attributes = {
     unitCost: {type:DataTypes.DECIMAL(20,6),allowNull:false},
     receivedOn: {type:DataTypes.DATEONLY,allowNull:false},
     expiresOn: {type:DataTypes.DATEONLY,allowNull:true},
-    manufacturedOn: {type:DataTypes.DATEONLY,allowNull:true}
+    manufacturedOn: {type:DataTypes.DATEONLY,allowNull:true},
+    // 2.7.49 — nom du fabricant saisi à la réception (migration 012).
+    manufacturer: {type:DataTypes.STRING(150),allowNull:false,defaultValue:''}
 };
 
 export const options = {

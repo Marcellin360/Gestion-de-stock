@@ -30,6 +30,14 @@ export const saleSchema = z.object({
   requestKey,
   expectedTotal: amount.optional(),
   customerName: z.string().trim().max(150).default(''),
+  // 2.7.79 — « Servi par » SAISI à la caisse (la personne qui sert change
+  // d'une vente à l'autre) ; stationné dans la note sous un marqueur, sans
+  // colonne nouvelle (utils/serviPar.js).
+  servedBy: z.string().trim().max(120).default(''),
+  // 2.7.35 — hôpital : vente sur carnet (patient hospitalisé + prescripteur).
+  // Les deux restent FACULTATIFS : le comptoir courant n'en a pas besoin.
+  patientId: identifier.nullable().default(null),
+  medicalStaffId: identifier.nullable().default(null),
   note: text.default(''),
   lines
 }).strict();

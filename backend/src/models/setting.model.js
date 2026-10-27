@@ -19,6 +19,9 @@ export const attributes = {
     marginMode: {type:DataTypes.STRING(10),allowNull:false},
     minMargin: {type:DataTypes.DECIMAL(5,2),allowNull:false},
     maxMargin: {type:DataTypes.DECIMAL(5,2),allowNull:false},
+    // 2.7.47 — frais d'achat AUTOMATIQUES, en % du prix d'achat (migration 011).
+    // Appliqués à chaque lot d'une réception : coût unitaire = PA × (1 + taux/100).
+    feesRate: {type:DataTypes.DECIMAL(5,2),allowNull:false,defaultValue:10},
     expiryDays: {type:DataTypes.INTEGER,allowNull:false,defaultValue:90},
     allowExpiredSale: {type:DataTypes.BOOLEAN,allowNull:false,defaultValue:false},
     updatedAt: {type:DataTypes.DATE,allowNull:false,defaultValue:DataTypes.NOW}

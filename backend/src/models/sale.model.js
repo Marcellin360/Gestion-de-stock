@@ -19,7 +19,12 @@ export const attributes = {
     createdAt: {type:DataTypes.DATE,allowNull:false,defaultValue:DataTypes.NOW},
     cancelledAt: {type:DataTypes.DATE,allowNull:true},
     cancelledBy: {type:DataTypes.INTEGER,allowNull:true},
-    cancelReason: {type:DataTypes.TEXT,allowNull:true}
+    cancelReason: {type:DataTypes.TEXT,allowNull:true},
+    // 2.7.35 — hôpital : la vente PEUT être liée à un patient hospitalisé et
+    // à son prescripteur (carnet du docteur / de la sage-femme). NULL = vente
+    // au comptoir ordinaire : rien ne change.
+    patientId: {type:DataTypes.INTEGER,allowNull:true},
+    medicalStaffId: {type:DataTypes.INTEGER,allowNull:true}
 };
 
 export const options = {

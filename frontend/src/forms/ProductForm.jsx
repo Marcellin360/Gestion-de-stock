@@ -13,26 +13,38 @@
 //
 // 2.7.12 — vente au détail (boîte / plaquette / comprimé) :
 //   • conditionnement : nombre de plaquettes par boîte, nombre de comprimé par
-//     plaquette (« matetika » 10 et 10) ; 0 plaquette = vente à la boîte seule ;
-//   • PRIX DÉTAILLÉS indépendants (« tsy hitovy mihitsy ») : à 0, le serveur
-//     calcule automatiquement au prorata du prix de la boîte au moment de la
-//     vente (prix boîte ÷ plaquettes, puis ÷ comprimé) — utile si l'officine
-//     pratique le prix proportionnel ; sinon saisir le prix réel affiché.
+//     plaquette ; 0 plaquette = vente à la boîte seule ;
+//   • PRIX DÉTAILLÉS indépendants : à 0, le serveur calcule automatiquement au
+//     prorata du prix de la boîte au moment de la vente (prix boîte ÷
+//     plaquettes, puis ÷ comprimé) ; sinon l'officine saisit le prix réel.
+//
+// 2.7.78 — formulaire épuré (demande de l'officine) :
+//   • les 4 cases « Vente au détail » (plaquettes par boîte, comprimé par
+//     plaquette, prix d'une plaquette, prix d'un comprimé) NE SONT PLUS
+//     AFFICHÉES — la bannière bleue qui les expliquait part avec, ainsi que
+//     leurs consignes. Les valeurs RESTENT dans la fiche et continuent d'être
+//     ENVOYÉES au serveur (le conditionnement existant n'est jamais perdu :
+//     la vente au détail fonctionne comme avant, elle se règle au besoin par
+//     l'équipe) ;
+//   • « Renoncer » devient « Retour », bouton ROUGE plein (famille annulation,
+//     comme le « Fermer » des boîtes de dialogue).
 import { useState } from 'react';
 import { referentials } from '../api/endpoints.js';
 import { Banner, Btn, Check, ErrorBox, Field, Input, Select, Textarea } from '../components/ui.jsx';
 import { useData } from '../context/DataContext.jsx';
-import { useAuth } from '../context/AuthContext.jsx';
 
 const vide = {
   name: '', presentation: '', categoryId: '', unit: 'boîte', minStock: 5, maxStock: '',
+  // 2.7.49 — « Nom de Fabriquant » retiré de la fiche : il se saisit lot par
+  // lot à la réception (« Nouvelle réception »), pas sur le médicament.
   note: '', active: true, marginRate: 20,
+  // 2.7.78 — conditionnement et prix au détail : conservés dans l'état et
+  // ENVOYÉS au serveur, mais plus saisis ici (cases retirées du formulaire).
   blistersPerBox: 10, unitsPerBlister: 10, pricePerBlister: 0, pricePerUnit: 0
 };
 
 export default function ProductForm({ produit, onDone, onCancel }) {
-  const { categories, units, settings } = useData();
-  const { can } = useAuth();
+  const { categories, settings } = useData();
   const [values, setValues] = useState(() => produit ? {
     ...vide, ...produit,
     categoryId: produit.categoryId ? String(produit.categoryId) : '',
@@ -43,7 +55,10 @@ export default function ProductForm({ produit, onDone, onCancel }) {
     unitsPerBlister: produit.unitsPerBlister ?? 10,
     pricePerBlister: Number(produit.pricePerBlister || 0),
     pricePerUnit: Number(produit.pricePerUnit || 0)
-  } : { ...vide, marginRate: Number(settings.marginRate ?? 20) });
+  // 2.7.48 — la marge est le TAUX UNIQUE des Paramètres (minMargin = maxMargin
+  // = le taux réglé par l'administrateur) : elle s'applique à tous les
+  // médicaments, aucune valeur libre ici.
+  } : { ...vide, marginRate: Number(settings.minMargin ?? 20) });
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -60,13 +75,17 @@ export default function ProductForm({ produit, onDone, onCancel }) {
         name: values.name.trim(),
         presentation: values.presentation || '',
         categoryId: values.categoryId ? Number(values.categoryId) : null,
+        // 2.7.31 — l'unité n'est plus saisie ici : la valeur existante de la
+        // fiche est renvoyée telle quelle (choisie depuis les réceptions).
         unit: values.unit || 'boîte',
         minStock: Number(values.minStock || 0),
         maxStock: values.maxStock === '' ? null : Number(values.maxStock),
         note: values.note || '',
         active: Boolean(values.active),
         marginRate: Number(values.marginRate || 0),
-        // 2.7.12 — conditionnement et prix au détail.
+        // 2.7.12 — conditionnement et prix au détail : 2.7.78 les envoie
+        // TOUJOURS (les cases ont quitté l'écran, pas la fiche : les valeurs
+        // déjà réglées continuent de s'appliquer à la vente au détail).
         blistersPerBox: Number(values.blistersPerBox || 0),
         unitsPerBlister: Number(values.unitsPerBlister || 0),
         pricePerBlister: Number(values.pricePerBlister || 0),
@@ -82,10 +101,6 @@ export default function ProductForm({ produit, onDone, onCancel }) {
       setBusy(false);
     }
   };
-
-  const mode = settings.marginMode === 'SALE' ? 'sur le prix de vente' : 'sur le coût d’achat';
-  const blisters = Number(values.blistersPerBox || 0);
-  const comprimes = Number(values.unitsPerBlister || 0);
 
   return (
     <form onSubmit={soumettre}>
@@ -122,9 +137,8 @@ export default function ProductForm({ produit, onDone, onCancel }) {
         <Field label="Présentation">
           <Input value={values.presentation} onChange={e => maj({ presentation: e.target.value })} placeholder="Boîte de 20" />
         </Field>
-        <Field label="Unité de gestion" hint={units?.length ? `Exemples : ${units.map(u => u.name).slice(0, 4).join(', ')}` : 'boîte, flacon, sachet…'}>
-          <Input value={values.unit} onChange={e => maj({ unit: e.target.value })} />
-        </Field>
+        {/* 2.7.31 — « Unité de gestion » n'est plus ici : elle se choisit
+            dans « Nouvelle réception » (boîte, flacon, pièce, plaquette). */}
         <Field label="Seuil d’alerte (stock minimum)" hint="Le stock maximum proposé est 30 fois ce seuil (modifiable)">
           <Input type="number" min="0" step="1" value={values.minStock}
             onChange={e => maj({ minStock: e.target.value, maxStock: Number(e.target.value) * 30 })} />
@@ -132,45 +146,20 @@ export default function ProductForm({ produit, onDone, onCancel }) {
         <Field label="Stock maximum (surstock)" hint="Facultatif">
           <Input type="number" min="0" step="1" value={values.maxStock} onChange={e => maj({ maxStock: e.target.value })} />
         </Field>
-        <Field label={`Taux de marge (%) — ${mode}` + (can('prices') ? '' : ' · réservé aux profils autorisés')}>
-          <Input type="number" min={settings.minMargin ?? 0} max={settings.maxMargin ?? 99} step="0.01"
-            value={values.marginRate} onChange={e => maj({ marginRate: e.target.value })} disabled={!can('prices')} />
+        {/* 2.7.48 — taux UNIQUE en lecture seule : le taux réglé par
+            l'administrateur dans Paramètres s'applique à tout le catalogue ;
+            on l'affiche ici, on ne le saisit plus fiche par fiche. */}
+        <Field label="Taux de marge (%)" hint="Taux unique réglé dans Paramètres (administrateur) — il s’applique à tous les médicaments">
+          <Input value={`${Number(settings.minMargin ?? values.marginRate)} % (Paramètres)`} readOnly />
         </Field>
       </div>
 
-      {/* 2.7.12 — vente au détail : conditionnement (plaquettes / comprimé) et
-          prix indépendants. Le vendeur choisit Boîte / Plaquette / Comprimé pour
-          chaque ligne du panier ; le stock reste compté en boîtes (0,1 boîte
-          par plaquette vendue si la boîte en fait 10). */}
-      <Banner tone="info" title="Vente au détail : plaquette et comprimé">
-        « Matetika » : 1 boîte = <strong>10 plaquettes</strong> et 1 plaquette = <strong>10 comprimés</strong>.
-        Mettez <strong>0</strong> si ce médicament ne se vend qu’à la boîte entière
-        (flacon, ampoule…). Les prix à 0 sont calculés automatiquement au prorata
-        du prix de la boîte : ici, {blisters > 0
-          ? <>1 plaquette &asymp; prix boîte ÷ {blisters}{comprimes > 0 ? <> ; 1 comprimé &asymp; prix boîte ÷ {blisters * comprimes}</> : ''}.</>
-          : 'aucune sous-unité (vente à la boîte seule).'}
-      </Banner>
-      <div className="grid grid--2">
-        <Field label="Plaquettes par boîte" hint="Ex. 10 — 0 = pas de vente par plaquette">
-          <Input type="number" min="0" step="1" value={values.blistersPerBox}
-            onChange={e => maj({ blistersPerBox: e.target.value })} />
-        </Field>
-        <Field label="Comprimé par plaquette" hint="Ex. 10 — 0 = pas de vente par comprimé">
-          <Input type="number" min="0" step="1" value={values.unitsPerBlister}
-            onChange={e => maj({ unitsPerBlister: e.target.value })}
-            disabled={blisters === 0} />
-        </Field>
-        <Field label="Prix d’une plaquette (Ar)" hint="0 = calculé automatiquement (prix boîte ÷ plaquettes)">
-          <Input type="number" min="0" step="0.01" value={values.pricePerBlister}
-            onChange={e => maj({ pricePerBlister: e.target.value })}
-            disabled={blisters === 0} />
-        </Field>
-        <Field label="Prix d’un comprimé (Ar)" hint="0 = calculé automatiquement (prix boîte ÷ plaquettes ÷ comprimé)">
-          <Input type="number" min="0" step="0.01" value={values.pricePerUnit}
-            onChange={e => maj({ pricePerUnit: e.target.value })}
-            disabled={blisters === 0 || comprimes === 0} />
-        </Field>
-      </div>
+      {/* 2.7.78 — les 4 cases « Vente au détail » (conditionnement et prix
+          d'une plaquette / d'un comprimé) et leur bannière bleue sont RETIRÉES
+          de l'écran ; les valeurs restent dans l'état et sont toujours ENVOYÉES
+          au serveur (blistersPerBox, unitsPerBlister, pricePerBlister,
+          pricePerUnit) : la vente au détail continue de fonctionner avec le
+          conditionnement déjà enregistré. */}
 
       <Field label="Note interne"><Textarea value={values.note} onChange={e => maj({ note: e.target.value })} /></Field>
 
@@ -179,7 +168,9 @@ export default function ProductForm({ produit, onDone, onCancel }) {
 
       <div className="row" style={{ marginTop: 12 }}>
         <div className="spacer" />
-        <Btn variant="ghost" onClick={onCancel}>Renoncer</Btn>
+        {/* 2.7.78 — « Retour » ROUGE plein (famille annulation), comme le
+            « Fermer » des boîtes de dialogue. */}
+        <Btn variant="danger" onClick={onCancel}>Retour</Btn>
         <Btn variant="primary" type="submit" disabled={busy}>{busy ? 'Enregistrement…' : 'Enregistrer'}</Btn>
       </div>
     </form>

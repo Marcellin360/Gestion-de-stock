@@ -15,7 +15,7 @@
 // plaquette ou d'un comprimé se règle par médicament ; à 0, il est calculé
 // automatiquement AU PRORATA du prix de la boîte au moment de la vente.
 // ============================================================================
-import { Sale, SaleLine, Product } from '../models/index.js';
+import { Sale, SaleLine, Product, Patient, MedicalStaff } from '../models/index.js';
 import { D, money } from '../utils/money.js';
 import { ensure } from '../utils/errors.js';
 import { today } from '../utils/dates.js';
@@ -25,6 +25,9 @@ import { lockProductLots, pickLots, applyMovements, quantite } from './stock.ser
 import { salePrice, retainedCost } from './pricing.service.js';
 import { getSettings } from './settings.service.js';
 import { log } from './audit.service.js';
+// 2.7.79 — « Servi par » saisi à la caisse : le nom est cousu en tête de la
+// note de la vente (marqueur reconnaissable), sans colonne nouvelle.
+import { coudreServiPar } from '../utils/serviPar.js';
 
 /** Nombre de sous-unités contenues dans 1 boîte (unité de gestion). */
 export function saleUnitFactor(product, saleUnit) {
@@ -157,15 +160,34 @@ export async function createSale(payload, user, transaction) {
   ensure(payload.expectedTotal === undefined || D(payload.expectedTotal).eq(prepared.total),
     'Le prix ou la disponibilité a changé depuis la vérification. Refaire la vérification avant de valider.', 409);
 
+  // 2.7.35 — hôpital : le carnet (patient + prescripteur) reste FACTUTATIF ;
+  // s'il est renseigné, patient et employé doivent exister et être actifs.
+  let patient = null;
+  if (payload.patientId) {
+    patient = await Patient.findByPk(payload.patientId, { transaction });
+    ensure(patient && patient.active, 'Patient introuvable ou clôturé.', 422);
+  }
+  let staff = null;
+  if (payload.medicalStaffId) {
+    staff = await MedicalStaff.findByPk(payload.medicalStaffId, { transaction });
+    ensure(staff && staff.active, 'Prescripteur introuvable ou retiré du TDR.', 422);
+  }
+
   const sale = await Sale.create({
     reference: `TMP-${payload.requestKey}`,
     userId: user.id,
     location: 'PHARMACY',
-    customerName: payload.customerName || '',
+    // Le nom du carnet devient le customerName si la caisse n'en a tapé aucun :
+    // la liste des ventes et le ticket montrent alors le patient hospitalisé.
+    customerName: payload.customerName || (patient ? patient.name : ''),
+    patientId: patient ? patient.id : null,
+    medicalStaffId: staff ? staff.id : null,
     total: prepared.total,
     costTotal: prepared.costTotal,
     margin: prepared.margin,
-    note: payload.note || '',
+    // 2.7.79 — le « Servi par » saisi voyage en tête de la note (marqueur
+    // ⟦Servi par : X⟧) ; les tickets/ordonnances le lisent et l'affichent.
+    note: coudreServiPar(payload.note, payload.servedBy),
     status: STATUS.VALIDATED,
     requestKey: payload.requestKey,
     createdAt: new Date()

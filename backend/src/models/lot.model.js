@@ -24,6 +24,9 @@ export const attributes = {
     purchasePrice: {type:DataTypes.DECIMAL(20,6),allowNull:false},
     allocatedFees: {type:DataTypes.DECIMAL(20,6),allowNull:false},
     unitCost: {type:DataTypes.DECIMAL(20,6),allowNull:false},
+    // 2.7.49 — le fabricant est saisi À LA RÉCEPTION, lot par lot (migration
+    // 012) ; il remplace « Nom de Fabriquant » de la fiche médicament.
+    manufacturer: {type:DataTypes.STRING(150),allowNull:false,defaultValue:''},
     status: {type:DataTypes.STRING(20),allowNull:false},
     blockReason: {type:DataTypes.TEXT,allowNull:true},
     createdAt: {type:DataTypes.DATE,allowNull:false,defaultValue:DataTypes.NOW}

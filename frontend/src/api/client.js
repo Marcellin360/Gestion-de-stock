@@ -65,7 +65,21 @@ async function request(path, { method = 'GET', body, raw = false, rejoue = false
   });
 
   if (raw) {
-    if (!response.ok) throw new ApiError('Export impossible.', response.status);
+    // 2.7.60 — une erreur ne se résume plus à « Export impossible » : le corps
+    // de la réponse du serveur ({error}/{detail} JSON ou HTML) est affiché
+    // pour désigner la vraie cause (colonne manquante, route absente…).
+    if (!response.ok) {
+      const corps = await response.text().catch(() => '');
+      let detail = '';
+      try {
+        const payload = JSON.parse(corps);
+        detail = [payload?.error, payload?.detail].filter(Boolean).join(' — ');
+      } catch { detail = corps.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(); }
+      detail = detail.slice(0, 240);
+      throw new ApiError(
+        detail ? `Export impossible : ${detail}` : 'Export impossible.',
+        response.status, detail ? [detail] : []);
+    }
     return response;
   }
   const text = await response.text();
@@ -123,6 +137,143 @@ export async function downloadDocument(path, filename) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+/**
+ * 2.7.56 — Télécharge un PDF produit par le serveur (ticket de vente,
+ * ordonnance du carnet, ordonnance de séjour).
+ *
+ * 2.7.63 — FIN DU « 204 No Content » : certaines protections locales
+ * (antivirus « protection web », extensions, proxy) VIDENT silencieusement la
+ * réponse du fetch binaire (204 sans corps ni en-têtes), alors que le backend
+ * est sain. Deux voies désormais, de la plus fiable à la plus complète :
+ *   1. le fetch tente sa chance ; si le PDF arrive (content-type), tout
+ *      se passe comme avant (blob, nom imposé) ;
+ *   2. s'il revient vide/sans PDF, LE NAVIGATEUR lui-même télécharge :
+ *      navigatePdf(path) ouvre l'adresse avec <a download> — un GET de
+ *      navigation, que les protections locales traitent comme une URL
+ *      normale (elles ne la vident PAS comme elles vident un fetch). Le
+ *      toast d'information dit de vérifier le dossier « Téléchargements ».
+ * Retour : { via: 'blob' | 'navigateur' }.
+ */
+export async function downloadPdf(path, filename) {
+  const response = await api.download(path);
+  // 2.7.58 — garde-fou « page vide » : si le backend n'a pas été REDÉMARRÉ
+  // depuis la 2.7.56 (Node ne recharge pas le code tout seul), il répond la
+  // page HTML d'impression au lieu du PDF ; ce HTML, téléchargé sous un nom
+  // .pdf, s'affichait blanc. On refuse ici avec un message clair plutôt
+  // qu'un fichier vide.
+  //
+  // 2.7.60 — DIAGNOSTIC PRÉCIS : au lieu du message générique, la cause exacte
+  // est affichée (réponse 200 en HTML = backend ANCIEN encore en écoute,
+  // colonne manquante = migration à jouer…), avec la piste de remède.
+  if (!String(response.headers.get('content-type') || '').includes('application/pdf')) {
+    const corps = await response.clone().text().catch(() => '');
+    const empreinte = response.headers.get('x-pharmastock-code');
+    // 2.7.63 — réponse vidée par une protection locale (204 No Content, ni
+    // corps ni empreinte) : contourner par la NAVIGATION du navigateur.
+    if (!empreinte && !corps.trim()) {
+      navigatePdf(path, filename);
+      return { via: 'navigateur' };
+    }
+    throw new ApiError(await causeRefusPdf(response), response.status);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename || 'document.pdf';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  return { via: 'blob' };
+}
+
+/** 2.7.63 — Téléchargement par NAVIGATION simple (GET d'URL, pas de fetch) :
+ *  utilisé quand une protection locale (antivirus web-shield, extension)
+ *  vide silencieusement les réponses fetch ; le navigateur, lui, gère le
+ *  flux comme une adresse ordinaire et dépose le fichier. */
+export function navigatePdf(path, filename) {
+  const lien = document.createElement('a');
+  lien.href = `/api${path}`;
+  lien.download = filename || 'document.pdf';
+  lien.rel = 'noopener';
+  document.body.appendChild(lien);
+  lien.click();
+  lien.remove();
+}
+
+/**
+ * 2.7.60 — CAUSE PRÉCISE quand le serveur ne renvoie PAS un PDF (réponse 200
+ * mais HTML, le cas « ancien backend encore en écoute »). Deux sondes :
+ *   1. le corps de sa réponse ({error}/{detail} JSON ou page HTML nettoyée) ;
+ *   2. la route publique /api/version — qu'aucun backend plus ancien que la
+ *      2.7.60 ne connaît : si elle 404, c'est la PREUVE que le processus en
+ *      écoute n'est pas celui qu'on vient de relancer (mauvais dossier,
+ *      mauvais port, ou ancien Node encore vivant).
+ */
+async function causeRefusPdf(response) {
+  const corps = await response.clone().text().catch(() => '');
+  const version = await fetch('/api/version', { credentials: 'same-origin' })
+    .then(reponse => (reponse.ok ? reponse.json() : null))
+    .catch(() => null);
+
+  if (!version?.versionAppli) {
+    return 'PAS de PDF : le backend qui RÉPOND est un ANCIEN code (il ne connaît '
+      + 'même pas /api/version, ajoutée en 2.7.60). Redémarrer ne change rien tant '
+      + 'que ce n’est pas LUI qu’on relance : FERMEZ toutes les fenêtres de '
+      + 'terminal, tuez les processus Node encore ouverts (gestionnaire des '
+      + 'tâches), puis relancez le BACKEND DEPUIS LE DOSSIER du projet où vous avez '
+      + 'collé le code — et vérifiez le PORT annoncé au démarrage. '
+      + '(Ce n’est pas F5 : il faut relancer le BACKEND lui-même, pas le navigateur.)';
+  }
+
+  const detail = lectureCorpsErreur(corps);
+
+  // 2.7.62 — EST-CE BIEN NOTRE backend qui a répondu ? Chaque réponse de
+  // l'API porte l'empreinte X-PharmaStock-Code (posée par routes/index.js).
+  // Un 204 VIDE sans cette empreinte ne peut PAS venir de PharmaStock :
+  // c'est un intermédiaire (antivirus web-shield, proxy, extension) qui
+  // intercepte les téléchargements. Fingerprint des en-têtes pour le
+  // confirmer visuellement.
+  const empreinte = response.headers.get('x-pharmastock-code');
+  if (!empreinte) {
+    const indices = ['server', 'via', 'x-powered-by', 'content-type']
+      .map(nom => [nom, response.headers.get(nom)])
+      .filter(([, valeur]) => valeur)
+      .map(([nom, valeur]) => `${nom}: ${valeur}`)
+      .join(' · ');
+    return `PDF refusé (code ${response.status}) : CE N'EST PAS PharmaStock `
+      + 'qui a répondu (empreinte X-PharmaStock-Code absente — un intermédiaire '
+      + 'a pris la place sur la réponse : ANTIVIRUS « protection web », proxy, '
+      + 'ou extension du navigateur). Essayez d’abord une FENÊTRE PRIVÉE '
+      + '(Ctrl + Maj + N) : si le PDF passe, coupable = extension/antivirus '
+      + '(ajoutez le site aux exclusions de sa protection web). '
+      + (indices ? `En-têtes vus : ${indices}.` : '');
+  }
+
+  if (/discharged_on|does not exist|column/i.test(detail)) {
+    return `PAS de PDF : la base n’a pas encore la colonne de la 2.7.59 — `
+      + `lancez « npm run db:migrate » à la racine du projet, puis relancez le `
+      + `BACKEND. (Cause serveur : ${detail.slice(0, 180)})`;
+  }
+  return `PDF refusé (code ${response.status}) : ${detail.slice(0, 220)} — `
+    + 'arrêtez puis relancez le BACKEND (pas F5 !), refaites « npm run build » '
+    + 'et recommencez ; la cause exacte figure aussi dans la console du serveur.';
+}
+
+/** Corps d'erreur rendu lisible : JSON du backend ({error}/{detail}) ou HTML. */
+function lectureCorpsErreur(corps) {
+  const brut = String(corps || '').trim();
+  if (brut.startsWith('{')) {
+    try {
+      const payload = JSON.parse(brut);
+      return [payload.error, payload.detail].filter(Boolean).join(' — ');
+    } catch { /* laisse l'HTML */ }
+  }
+  return brut.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+    || 'aucune réponse exploitable';
 }
 
 /** Télécharge un export CSV produit par le serveur. */

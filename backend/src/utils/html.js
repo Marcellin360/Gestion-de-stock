@@ -8,8 +8,10 @@ export const formatMoney = (value, currency = 'Ar') => `${formatNumber(value)} $
 export const formatDate = value => (value ? new Date(value).toLocaleDateString('fr-FR') : '—');
 export const formatDateTime = value => (value ? new Date(value).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—');
 
-/** Gabarit commun des documents imprimables (en-tête pharmacie + tableau + pied). */
-export function printablePage({ title, subtitle = '', pharmacy, meta = [], body, footer = '' }) {
+/** Gabarit commun des documents imprimables (en-tête pharmacie + tableau + pied).
+ * `bare` : sans en-tête global (le corps fournit le sien — ex. ticket en 2 exemplaires,
+ * chacun porte le sien). `extraCss` : règles propres au document (format de page, coupe). */
+export function printablePage({ title, subtitle = '', pharmacy, meta = [], body, footer = '', bare = false, extraCss = '' }) {
   return `<!doctype html>
 <html lang="fr"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -33,18 +35,19 @@ export function printablePage({ title, subtitle = '', pharmacy, meta = [], body,
   .footer{margin-top:26px;font-size:10px;color:#8698a0;border-top:1px solid #e2ece8;padding-top:8px}
   .total{font-size:16px;font-weight:700;color:#0b6b5b}
   @media print{ body{padding:0} .no-print{display:none} }
+  ${extraCss}
 </style></head><body>
-<header>
+${bare ? '' : `<header>
   <div>
-    <div class="pharmacy">${escapeHtml(pharmacy?.pharmacyName || 'Pharmacie')}</div>
-    <div class="muted">${escapeHtml(pharmacy?.address || '')}${pharmacy?.phone ? ` · ${escapeHtml(pharmacy.phone)}` : ''}</div>
+    <div class=\"pharmacy\">${escapeHtml(pharmacy?.pharmacyName || 'Pharmacie')}</div>
+    <div class=\"muted\">${escapeHtml(pharmacy?.address || '')}${pharmacy?.phone ? ` · ${escapeHtml(pharmacy.phone)}` : ''}</div>
   </div>
-  <div style="text-align:right">
+  <div style=\"text-align:right\">
     <h1>${escapeHtml(title)}</h1>
-    ${subtitle ? `<div class="muted">${escapeHtml(subtitle)}</div>` : ''}
-    <div class="muted">Édité le ${formatDateTime(new Date())}</div>
+    ${subtitle ? `<div class=\"muted\">${escapeHtml(subtitle)}</div>` : ''}
+    <div class=\"muted\">Édité le ${formatDateTime(new Date())}</div>
   </div>
-</header>
+</header>`}
 ${meta.length ? `<section class="meta">${meta.map(([label, value]) => `<div><span class="muted">${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</section>` : ''}
 ${body}
 ${footer ? `<div class="footer">${footer}</div>` : ''}

@@ -7,9 +7,13 @@
 //   • le formulaire n'envoie QUE les champs attendus par le serveur : l'enregistrer
 //     avec l'objet complet venait auparavant avec « id » et « createdAt », et la
 //     modification était refusée (« champ inconnu »).
+// 2.7.78 — la bannière bleue « Plus de « Raison sociale » à saisir » est
+// RETIRÉE du formulaire de création (demande de l'officine). Le comportement,
+// lui, ne change pas : à la création le serveur nomme toujours le fournisseur
+// tout seul (personne à contacter, sinon téléphone, sinon « Fournisseur N »).
 import { useState } from 'react';
 import { referentials } from '../api/endpoints.js';
-import { Banner, Btn, Check, ErrorBox, Field, Input, Textarea } from '../components/ui.jsx';
+import { Btn, Check, ErrorBox, Field, Input, Textarea } from '../components/ui.jsx';
 
 const vide = { name: '', contact: '', phone: '', email: '', address: '', nif: '', note: '', active: true };
 
@@ -62,17 +66,14 @@ export default function SupplierForm({ fournisseur, onDone, onCancel }) {
     <form onSubmit={soumettre}>
       <ErrorBox error={error} />
 
+      {/* 2.7.78 — à la CRÉATION, plus de bannière ni de case : la fiche part
+          directement sur les coordonnées, et le serveur attribue le nom.
+          En MODIFICATION, la raison sociale reste corrigeable. */}
       {fournisseur ? (
         <Field label="Raison sociale" hint="Vous pouvez la corriger ici : c’est le nom affiché dans la liste et dans les rapports d’achat.">
           <Input value={values.name} onChange={e => maj({ name: e.target.value })} />
         </Field>
-      ) : (
-        <Banner tone="info" title="Plus de « Raison sociale » à saisir">
-          Le logiciel nomme le fournisseur tout seul : il reprend la <strong>personne à contacter</strong>,
-          à défaut le <strong>téléphone</strong>, et sinon un numéro (<strong>Fournisseur 4</strong>…).
-          Vous pourrez le renommer quand vous voulez avec le crayon <strong>Modifier</strong>.
-        </Banner>
-      )}
+      ) : null}
 
       <div className="grid grid--2">
         <Field label="Personne à contacter"><Input value={values.contact} onChange={e => maj({ contact: e.target.value })} /></Field>

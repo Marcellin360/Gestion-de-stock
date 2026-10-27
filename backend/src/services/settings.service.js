@@ -35,6 +35,25 @@ export async function updateSettings(values, user, transaction) {
   }
   await current.update({ ...values, updatedAt: new Date() }, { transaction });
 
+  // 2.7.48 — « Taux de marge » UNIQUE (Paramètres : un seul champ, min = max) :
+  // le taux choisi s'applique à TOUS les médicaments et le prix de chaque fiche
+  // est recalculé TOUT DE SUITE (PV = coût × (1 + taux)). Un envoi ancien en
+  // plage (min ≠ max, ex. recalibrage technique) ne touche pas les marginRate.
+  const tauxUnique = values.minMargin !== undefined && values.maxMargin !== undefined
+    && D(values.minMargin).eq(D(values.maxMargin));
+  const tauxChange = tauxUnique
+    && !(D(before.minMargin).eq(values.minMargin) && D(before.maxMargin).eq(values.maxMargin));
+  if (tauxChange) {
+    const reglages = current.toJSON();
+    for (const produit of await Product.findAll({ transaction })) {
+      await produit.update({ marginRate: values.minMargin, updatedAt: new Date() }, { transaction });
+      await recomputeProductCosting(produit.id, reglages, {
+        userId: user.id, origin: 'PARAMETRES',
+        reason: `Taux de marge unique réglé à ${values.minMargin} % (Paramètres)`
+      }, transaction);
+    }
+  }
+
   // Changer la base du prix de vente, ou le mode de calcul de la marge, doit
   // s'appliquer TOUT DE SUITE aux fiches déjà enregistrées : sinon le catalogue
   // continuerait d'afficher les anciens prix jusqu'à la prochaine réception.

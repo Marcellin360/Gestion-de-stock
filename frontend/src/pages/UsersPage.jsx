@@ -1,7 +1,7 @@
 // Comptes et droits : création, modification, désactivation. Le dernier
 // administrateur actif ne peut jamais être retiré (garde-fou côté serveur).
 import { useEffect, useState } from 'react';
-import { Plus, Pencil } from 'lucide-react';
+import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { users as usersApi } from '../api/endpoints.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
@@ -15,6 +15,10 @@ export default function UsersPage() {
   const [roles, setRoles] = useState([]);
   const [edition, setEdition] = useState(null);
   const [error, setError] = useState(null);
+  // 2.7.29 — confirmation avant suppression définitive d'un compte.
+  const [suppression, setSuppression] = useState(null);
+  const [occupation, setOccupation] = useState(false);
+  const [erreurSuppression, setErreurSuppression] = useState(null);
 
   const charger = async () => {
     setError(null);
@@ -28,6 +32,24 @@ export default function UsersPage() {
   };
 
   useEffect(() => { charger(); }, []);
+
+  /** Suppression définitive (2.7.29) : le serveur refuse si le compte a trace. */
+  const supprimer = async () => {
+    setOccupation(true);
+    setErreurSuppression(null);
+    try {
+      await usersApi.supprimer(suppression.id);
+      toast.success(`Compte « ${suppression.name} » supprimé.`);
+      setSuppression(null);
+      await charger();
+    } catch (cause) {
+      // Historique conservé (ventes, transferts…) ou dernier admin : la base
+      // refuse — la phrase du serveur explique quoi faire (désactiver).
+      setErreurSuppression(cause);
+    } finally {
+      setOccupation(false);
+    }
+  };
 
   return (
     <>
@@ -53,15 +75,47 @@ export default function UsersPage() {
                 <td>{compte.phone || '—'}</td>
                 <td>{compte.lastLoginAt ? new Date(compte.lastLoginAt).toLocaleString('fr-FR') : 'jamais'}</td>
                 <td>{compte.active ? <Badge tone="ok">actif</Badge> : <Badge tone="danger">désactivé</Badge>}</td>
-                <td className="right"><Btn variant="ghost" icon={Pencil} onClick={() => setEdition(compte)} aria-label="Modifier" /></td>
+                <td className="right">
+                  <Btn variant="ghost" icon={Pencil} onClick={() => setEdition(compte)} aria-label="Modifier" />
+                  {/* 2.7.29 — la corbeille n'est pas proposée sur SON propre
+                      compte (on ne peut pas se supprimer soi-même). */}
+                  {compte.id === user.id ? null : (
+                    <Btn variant="ghost" icon={Trash2} aria-label={`Supprimer ${compte.name}`}
+                      onClick={() => { setErreurSuppression(null); setSuppression(compte); }} />
+                  )}
+                </td>
               </tr>
             ))}
           </Table>
         )}
         <p className="muted" style={{ fontSize: '.82rem', marginTop: 10 }}>
-          Un compte n’est jamais supprimé : il est désactivé, ce qui ferme immédiatement ses sessions ouvertes.
+          La corbeille supprime définitivement le compte. Si l'utilisateur a enregistré
+          des opérations (ventes, réceptions, transferts…), la suppression est refusée
+          pour protéger le journal : désactivez le compte à la place (crayon → État).
         </p>
       </Card>
+
+      {/* 2.7.29 — confirmation explicite avant suppression définitive. */}
+      {suppression ? (
+        <Modal title={`Supprimer « ${suppression.name} » ?`} onClose={() => !occupation && setSuppression(null)}
+          footer={<>
+            <Btn variant="ghost" onClick={() => setSuppression(null)} disabled={occupation}>Annuler</Btn>
+            <Btn variant="danger" icon={Trash2} onClick={supprimer} disabled={occupation}>
+              {occupation ? 'Suppression…' : 'Supprimer définitivement'}
+            </Btn>
+          </>}>
+          <ErrorBox error={erreurSuppression} />
+          <p style={{ margin: '0 0 8px' }}>
+            Cette action est <strong>définitive</strong> : le compte
+            « <strong>{suppression.name}</strong> » ({suppression.login} · {suppression.roleName || '—'})
+            sera supprimé et ses sessions fermées immédiatement.
+          </p>
+          <p className="muted" style={{ fontSize: '.84rem' }}>
+            Si ce compte a déjà enregistré des opérations, la suppression sera refusée
+            par la base de données : il faudra alors le désactiver à la place.
+          </p>
+        </Modal>
+      ) : null}
 
       {edition ? (
         <Modal title={edition === 'nouveau' ? 'Nouvel utilisateur' : `Modifier ${edition.name}`} onClose={() => setEdition(null)} wide>

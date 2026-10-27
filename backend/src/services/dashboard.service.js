@@ -8,7 +8,7 @@
 // Chaque magasin a ses alertes, sa valeur de stock et ses documents.
 // ============================================================================
 import {
-  Category, Supplier, Product, Lot, Inventory, Movement,
+  Category, Supplier, Product, Lot, Inventory, InventoryLine, Movement,
   ProductForm, UnitOfMeasure
 } from '../models/index.js';
 import { getSettings } from './settings.service.js';
@@ -46,12 +46,69 @@ export async function buildData(user, transaction) {
   const produitsPlats = plain(products);
   const fournisseursPlats = plain(suppliers);
 
+  // 2.7.80 — les lignes de CHAQUE inventaire arrivent avec l'inventaire
+  // (pour la liste du dépôt : « Médicament · Théorique · Physique · Écart ·
+  // Justification » sans aller-retour par session).
+  const lignesInventaire = plain(await InventoryLine.findAll({
+    where: { inventoryId: inventories.map(i => i.id) }, order: [['id', 'ASC']], transaction
+  }));
+  const lignesParInventaire = new Map();
+  for (const ligne of lignesInventaire) {
+    if (!lignesParInventaire.has(ligne.inventoryId)) lignesParInventaire.set(ligne.inventoryId, []);
+    lignesParInventaire.get(ligne.inventoryId).push(ligne);
+  }
+  const inventoriesPlats = plain(inventories).map(inventaire => ({
+    ...inventaire,
+    lines: lignesParInventaire.get(inventaire.id) || []
+  }));
+
   const parMagasin = location => ({
     location,
     label: LOCATION_LABELS[location],
     stats: computeStats({ products: produitsPlats, lots: lotsPlats, settings, documents, date, location }),
     alerts: computeAlerts({ products: produitsPlats, lots: lotsPlats, suppliers: fournisseursPlats, settings, date, location })
   });
+
+  // ========================================================================
+  // 2.7.28 — ALERTES AUTOMATIQUES « BIENTÔT ÉPUISÉ », ROUTÉES PAR PROFIL.
+  // La règle existe déjà dans computeAlerts, magasin par magasin :
+  //   • stock vendable ≤ seuil minimum du médicament → « Stock faible » ; 
+  //   • plus aucune unité → « Rupture de stock ».
+  // Ce qui change : le ROUTAGE. Avant, le paquet global fusionnait les deux
+  // magasins — un dépôt plein MASQUAIT une pharmacie vide — et le dépôt n'était
+  // jamais alerté du comptoir. Désormais :
+  //   • pharmacie ↓ (faible/rupture) → pharmacien ET dépôt sont alertés
+  //     (le dépôt réassort à temps ; il ne reçoit QUE ces alertes-là, pas les
+  //     péremptions du comptoir) ;
+  //   • dépôt ↓ (faible/rupture) → catégorie admin ET dépôt alertés ;
+  //   • l'administrateur voit TOUT, étiqueté par magasin.
+  // ========================================================================
+  const TYPES_STOCK_CRITIQUE = ['RUPTURE', 'RUPTURE_VENDABLE', 'STOCK_FAIBLE'];
+  const ordreAlerte = { red: 0, amber: 1 };
+  const trierAlertes = liste => [...liste]
+    .sort((a, b) => ordreAlerte[a.level] - ordreAlerte[b.level] || a.name.localeCompare(b.name));
+
+  const magasins = { DEPOT: parMagasin('DEPOT'), PHARMACY: parMagasin('PHARMACY') };
+
+  // ------------------------------------------------------------------------
+  // 2.7.34 — teboka ⑦ : RAPPEL D'INVENTAIRE MENSUEL DE LA RÉSERVE.
+  // Si aucun inventaire du DÉPÔT n'a été VALIDÉ depuis le 1er du mois (heure
+  // de la pharmacie), l'alerte « Rappel inventaire mensuel » (orange) est
+  // jointe aux alertes du dépôt : le gestionnaire de réserve la voit sur son
+  // tableau de bord (et l'administrateur, qui voit toutes les alertes du
+  // dépôt). Elle disparaît dès le premier inventaire validé du mois.
+  // ------------------------------------------------------------------------
+  const rappel = rappelInventaireMensuel(plain(inventories), 'DEPOT');
+  if (rappel) magasins.DEPOT.alerts = [...magasins.DEPOT.alerts, rappel];
+  // Vue administrateur : les deux magasins, jamais fusionnés en un seul compteur
+  // (sinon la réserve cacherait le comptoir), triés rouge puis orange.
+  const alertesAdmin = trierAlertes([...magasins.DEPOT.alerts, ...magasins.PHARMACY.alerts]);
+
+  // 2.7.33 — teboka ⑮ DASHBOARD MENSUEL : les chiffres du MOIS EN COURS
+  // (caisse du comptoir ET activité de la réserve) sont calculés par le serveur
+  // en une seule série de requêtes — jamais par addition des 300 documents
+  // chargés à l'écran (un mois de pharmacie les dépasse vite).
+  const month = await monthStats(transaction);
 
   const payload = {
     date,
@@ -60,19 +117,91 @@ export async function buildData(user, transaction) {
     suppliers: fournisseursPlats,
     products: produitsPlats,
     lots: lotsPlats,
-    inventories: plain(inventories),
+    inventories: inventoriesPlats,
     productForms: plain(productForms),
     units: plain(units),
     documents,
     movements: plain(movements),
+    month,
     stats: computeStats({ products: produitsPlats, lots: lotsPlats, settings, documents, date }),
-    alerts: computeAlerts({ products: produitsPlats, lots: lotsPlats, suppliers: fournisseursPlats, settings, date }),
-    locations: { DEPOT: parMagasin('DEPOT'), PHARMACY: parMagasin('PHARMACY') }
+    alerts: alertesAdmin,
+    locations: magasins
   };
 
   const roleCode = user.roleCode || user.role?.code;
-  if (roleCode === 'DEPOT') return restrictForDepot(payload);
+  if (roleCode === 'DEPOT') return restrictForDepot(payload, TYPES_STOCK_CRITIQUE);
+  // Pharmacien : ses alertes à lui — la pharmacie, jamais diluée dans le dépôt
+  // (sinon une rupture au comptoir passerait inaperçue tant que la réserve est
+  // pleine). Les transferts vers le comptoir restent l'affaire du dépôt.
+  if (roleCode === 'PHARMACIST') return { ...payload, alerts: magasins.PHARMACY.alerts };
   return payload;
+}
+
+// ============================================================================
+// 2.7.34 — teboka ⑦ : RAPPEL D'INVENTAIRE MENSUEL (helper des alertes).
+// Renvoie une alerte orange tant qu'aucun inventaire du magasin n'a été
+// validé depuis le 1er du mois courant (AAAA-MM à l'heure de la pharmacie).
+// ============================================================================
+function rappelInventaireMensuel(inventaires, location) {
+  const moisCourant = today().slice(0, 7);
+  const derniere = (inventaires || [])
+    .filter(inv => inv.location === location && inv.status === 'VALIDATED' && inv.validatedAt)
+    .sort((a, b) => new Date(b.validatedAt) - new Date(a.validatedAt))[0];
+  const moisDerniere = derniere ? new Date(derniere.validatedAt).toISOString().slice(0, 7) : null;
+  if (moisDerniere === moisCourant) return null;
+  return {
+    id: `rappel-inventaire-mensuel-${location}`,
+    type: 'INVENTAIRE_MENSUEL',
+    level: 'amber',
+    target: 'inventaires',
+    title: 'Rappel inventaire mensuel',
+    name: LOCATION_LABELS[location] || location,
+    detail: derniere
+      ? `Dernier inventaire validé le ${new Date(derniere.validatedAt).toLocaleDateString('fr-FR')} — comptez la réserve pour boucler le mois (écran « Inventaires »).`
+      : 'Aucun inventaire validé de la réserve — prévoyez le comptage mensuel (écran « Inventaires »).',
+    location
+  };
+}
+
+// ============================================================================
+// 2.7.33 — teboka ⑮ CHIFFRES DU MOIS EN COURS (tableau de bord mensuel).
+// Bornes du mois à l'heure de la pharmacie (+03:00), comme salesCalendar() :
+//   • comptoir : nombre de ventes, chiffre d'affaires, marge brute, pertes ;
+//   • réserve  : achats reçus (réceptions validées) et transferts vers le
+//     comptoir, en valeur comme en nombre.
+// ============================================================================
+export async function monthStats(transaction) {  const mos = today();
+  const mois = mos.slice(0, 7); // AAAA-MM du jour de la pharmacie
+  const [annee, m] = mois.split('-').map(Number);
+  const debut = new Date(`${mois}-01T00:00:00+03:00`);
+  const fin = m === 12
+    ? new Date(`${annee + 1}-01-01T00:00:00+03:00`)
+    : new Date(`${annee}-${String(m + 1).padStart(2, '0')}-01T00:00:00+03:00`);
+
+  const [[ventes]] = await sequelize.query(
+    `SELECT COUNT(*)::int AS "salesMonthCount",
+            ROUND(COALESCE(SUM(total), 0), 2)::float8 AS "salesMonth",
+            ROUND(COALESCE(SUM(margin), 0), 2)::float8 AS "marginMonth"
+     FROM sales
+     WHERE status = 'VALIDATED' AND created_at >= :debut AND created_at < :fin`,
+    { replacements: { debut, fin }, transaction }
+  );
+  const [[pertes]] = await sequelize.query(
+    `SELECT ROUND(COALESCE(SUM(cost_total), 0), 2)::float8 AS "lossesMonth"
+     FROM losses
+     WHERE status = 'VALIDATED' AND created_at >= :debut AND created_at < :fin`,
+    { replacements: { debut, fin }, transaction }
+  );
+  const [[reserve]] = await sequelize.query(
+    `SELECT (SELECT ROUND(COALESCE(SUM(cost_total), 0), 2) FROM receipts
+              WHERE status = 'VALIDATED' AND created_at >= :debut AND created_at < :fin)::float8 AS "receiptsMonth",
+            (SELECT COUNT(*) FROM transfers
+              WHERE status = 'VALIDATED' AND created_at >= :debut AND created_at < :fin)::int AS "transfersMonthCount",
+            (SELECT ROUND(COALESCE(SUM(cost_total), 0), 2) FROM transfers
+              WHERE status = 'VALIDATED' AND created_at >= :debut AND created_at < :fin)::float8 AS "transfersMonth"`,
+    { replacements: { debut, fin }, transaction }
+  );
+  return { month: mois, ...ventes, ...pertes, ...reserve };
 }
 
 /**
@@ -81,7 +210,17 @@ export async function buildData(user, transaction) {
  * (il sert aux étiquettes et à renseigner le comptoir). Le chiffre d'affaires
  * et la marge du jour restent l'affaire de la pharmacie.
  */
-function restrictForDepot(payload) {
+function restrictForDepot(payload, typesStockCritique) {
+  // 2.7.28 — le DÉPÔT est alerté quand la PHARMACIE approche de l'épuisement :
+  // en plus de ses propres alertes, il reçoit celles du comptoir de type
+  // « bientôt épuisé / rupture » (RUPTURE, RUPTURE_VENDABLE, STOCK_FAIBLE)
+  // — et seulement celles-là (les péremptions, bloqués, etc. du comptoir
+  // restent l'affaire de la pharmacie). Chaque alerte garde sa « location »
+  // pour afficher son origine (« (pharmacie) » figure déjà dans le détail).
+  const alertesDepot = [
+    ...payload.locations.DEPOT.alerts,
+    ...payload.locations.PHARMACY.alerts.filter(alerte => typesStockCritique.includes(alerte.type))
+  ];
   return {
     ...payload,
     stats: {
@@ -90,7 +229,15 @@ function restrictForDepot(payload) {
       salesTodayCount: 0,
       marginToday: '0.000000'
     },
-    alerts: payload.locations.DEPOT.alerts,
+    alerts: alertesDepot,
+    // 2.7.33 — le mois du DÉPÔT : achats et transferts uniquement (le chiffre
+    // d'affaires et la marge du comptoir restent l'affaire de la pharmacie).
+    month: {
+      month: payload.month.month,
+      receiptsMonth: payload.month.receiptsMonth,
+      transfersMonthCount: payload.month.transfersMonthCount,
+      transfersMonth: payload.month.transfersMonth
+    },
     documents: payload.documents.filter(d => ['RECEIPT', 'TRANSFER', 'LOSS', 'ADJUSTMENT'].includes(d.kind))
       .map(({ margin, ...rest }) => rest),
     movements: payload.movements.filter(m => m.location === 'DEPOT'),

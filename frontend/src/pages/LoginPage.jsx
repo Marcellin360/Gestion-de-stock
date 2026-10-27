@@ -5,6 +5,13 @@
 // * CONFORT : affichage/masquage du mot de passe, auto-complétion standard
 //   (username / current-password), focus automatique, icônes explicites,
 //   erreur en ligne sous chaque champ + bannière globale, spinner du bouton.
+// * IHM (2.7.26 → 2.7.27) : VALIDATION CÔTÉ CLIENT d'abord (aucun appel réseau
+//   tant qu'un champ obligatoire manque, erreur SOUS LE CHAMP concerné, focus
+//   sur la première faute) ; erreur COHÉRENTE AVEC LA FAUTE — un identifiant
+//   ou mot de passe FAUX (401) affiche TOUJOURS « Identifiant ou mot de passe
+//   incorrect. », le secours « serveur impossible » n'apparaît qu'après une
+//   NOUVELLE TENTATIVE automatique (5xx ou silence) et guide vers le
+//   redémarrage ; champs verrouillés pendant la vérification.
 // * FORME : tout tient à l'écran (aucun scroll sur ordinateur) ; la
 //   décoration est dans styles.css, blocs préfixés .lp-* (fin de fichier).
 //   Pas de nav « Accueil/Services/… » : seuls les éléments utiles au
@@ -14,6 +21,7 @@
 import { useState } from 'react';
 import { AlertTriangle, Eye, EyeOff, Lock, LogIn, Pill, ShieldCheck, User } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
+import { Field, Input } from '../components/ui.jsx';
 import { navigate } from '../utils/router.js';
 
 export default function LoginPage() {
@@ -21,7 +29,7 @@ export default function LoginPage() {
   const [values, setValues] = useState({ login: '', password: '' });
   // Erreur PAR CHAMP (validation côté client) — affichée sous le champ fautif.
   const [champs, setChamps] = useState({ login: '', password: '' });
-  // Erreur GLOBALE (réponse du serveur ou coupure réseau) — bannière au-dessus du formulaire.
+  // Erreur GLOBALE (réponse du serveur ou coupure) — bannière en tête de forme.
   const [erreur, setErreur] = useState('');
   // Affichage/masquage du mot de passe (confort standard des écrans de login).
   const [visible, setVisible] = useState(false);
@@ -29,33 +37,77 @@ export default function LoginPage() {
 
   /** Saisie : l'erreur du champ retapé s'efface aussitôt (feedback immédiat). */
   const maj = (nom, valeur) => {
-    setValues((etat) => ({ ...etat, [nom]: valeur }));
-    setChamps((etat) => (etat[nom] ? { ...etat, [nom]: '' } : etat));
+    setValues(etat => ({ ...etat, [nom]: valeur }));
+    setChamps(etat => (etat[nom] ? { ...etat, [nom]: '' } : etat));
   };
 
   /**
-   * Validation côté client AVANT tout appel réseau : chaque champ obligatoire,
-   * appel de AuthContext.login(), puis redirection vers le tableau de bord.
-   * ⚠ Si ton AuthContext attend un objet — login({ login, password }) — ou ne
-   *   lève pas d'exception (il retourne { ok, message }), adapte uniquement ce bloc.
+   * Validation côté client AVANT tout appel réseau : chaque champ obligatoire
+   * reçoit son propre message, et le focus suit la première faute rencontrée.
    */
-  const soumettre = async (e) => {
-    e.preventDefault();
-    const err = {};
-    if (!values.login.trim()) err.login = 'Identifiant obligatoire.';
-    if (!values.password) err.password = 'Mot de passe obligatoire.';
-    setChamps(err);
-    if (Object.keys(err).length) return;
+  const valider = () => {
+    const fautes = {
+      login: values.login.trim() ? '' : 'Saisissez votre identifiant.',
+      password: values.password ? '' : 'Saisissez votre mot de passe.'
+    };
+    setChamps(fautes);
+    if (fautes.login) { document.getElementById('identifiant')?.focus(); return false; }
+    if (fautes.password) { document.getElementById('mot-de-passe')?.focus(); return false; }
+    return true;
+  };
+
+  /**
+   * Traduit UNE réponse du serveur en message d'affichage. Chaque faute reçoit
+   * le message qui lui correspond (règle IHM : erreur cohérente avec la faute) :
+   *   • 401 — le serveur A répondu : l'identifiant ou le mot de passe est faux
+   *     (la norme interdit de préciser lequel) ;
+   *   • 429/422 — message français du serveur, déjà clair ;
+   *   • 5xx ou silence — le serveur est en faute : message guidé vers le
+   *     redémarrage, sans « 500 » ni texte technique.
+   */
+  const presenter = cause => {
+    const statut = cause?.status;
+    const texte = String(cause?.message || '');
+    if (statut === 401) {
+      setErreur(/désactivé/i.test(texte) ? texte : 'Identifiant ou mot de passe incorrect.');
+    } else if (statut && statut < 500) {
+      setErreur(texte || 'Requête refusée.');
+    } else {
+      setErreur('La connexion au serveur est impossible. Redémarrez-le (arrêt puis « npm start »), vérifiez qu’il est bien démarré, puis réessayez.');
+    }
+  };
+
+  const submit = async event => {
+    event.preventDefault();
+    if (busy || !valider()) return;
     setBusy(true);
     setErreur('');
+    const identifiant = values.login.trim();
     try {
-      await login(values.login.trim(), values.password);
-      navigate('/'); // ← post-login : tableau de bord (adapte si ta route diffère)
-    } catch (e2) {
-      setErreur((e2 && e2.message) || 'Identifiants incorrects.');
-    } finally {
-      setBusy(false);
+      await login(identifiant, values.password);
+      navigate('tableau-de-bord');
+      return;
+    } catch (premier) {
+      // 2.7.27 — 401 & 4xx : la faute est certaine (le serveur a répondu) →
+      // message adapté immédiatement, SANS nouvelle tentative.
+      if (premier?.status && premier.status < 500) {
+        presenter(premier);
+        setBusy(false);
+        return;
+      }
+      // Faute interne (5xx) ou silence : une NOUVELLE TENTATIVE automatique
+      // après une courte pause, avant de conclure (panne transitoire, serveur
+      // en cours de redémarrage).
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      try {
+        await login(identifiant, values.password);
+        navigate('tableau-de-bord');
+        return;
+      } catch (second) {
+        presenter(second);
+      }
     }
+    setBusy(false);
   };
 
   return (
@@ -63,7 +115,9 @@ export default function LoginPage() {
       <div className="lp-scene">
         <div className="lp-card">
 
-          {/* ---------- Décor : vagues + illustration isométrique (SVG pur, aucun fichier externe) ---------- */}
+          {/* ---------- Panneau de marque (héritier du « login-brand » de la
+              2.7.26) : vagues + illustration isométrique (SVG pur, aucun
+              fichier externe) ---------- */}
           <div className="lp-art" aria-hidden="true">
             <svg className="lp-waves" viewBox="0 0 1120 620" preserveAspectRatio="none">
               <defs>
@@ -199,55 +253,56 @@ export default function LoginPage() {
             </div>
 
             {erreur ? (
-              <div className="lp-erreur" role="alert">
+              <div className="lp-erreur login-alert" role="alert">
                 <AlertTriangle size={16} />
                 <span>{erreur}</span>
               </div>
             ) : null}
 
-            <form onSubmit={soumettre} noValidate>
-              <div className={'lp-field' + (champs.login ? ' lp-field--error' : '')}>
-                <User size={16} className="lp-ico" />
-                <input
-                  type="text"
-                  placeholder="Identifiant"
-                  autoComplete="username"
-                  autoFocus
-                  aria-invalid={champs.login ? true : undefined}
-                  value={values.login}
-                  onChange={(e) => maj('login', e.target.value)}
-                />
-                {champs.login ? <p className="lp-field-err">{champs.login}</p> : null}
-              </div>
+            <form onSubmit={submit} noValidate>
+              <Field error={champs.login}>
+                <div className={'lp-field' + (champs.login ? ' lp-field--error' : '')}>
+                  <User size={16} className="lp-ico" />
+                  <Input id="identifiant" type="text"
+                    placeholder="Identifiant"
+                    autoComplete="username" autoFocus disabled={busy}
+                    value={values.login}
+                    onChange={e => maj('login', e.target.value)}
+                    aria-invalid={Boolean(champs.login)}
+                    className={champs.login ? 'input--error' : ''} />
+                </div>
+              </Field>
 
-              <div className={'lp-field' + (champs.password ? ' lp-field--error' : '')}>
-                <Lock size={16} className="lp-ico" />
-                <input
-                  type={visible ? 'text' : 'password'}
-                  placeholder="Mot de passe"
-                  autoComplete="current-password"
-                  aria-invalid={champs.password ? true : undefined}
-                  value={values.password}
-                  onChange={(e) => maj('password', e.target.value)}
-                />
-                <button
-                  type="button"
-                  className="lp-eye"
-                  onClick={() => setVisible((v) => !v)}
-                  aria-label={visible ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
-                >
-                  {visible ? <EyeOff size={17} /> : <Eye size={17} />}
-                </button>
-                {champs.password ? <p className="lp-field-err">{champs.password}</p> : null}
-              </div>
+              <Field error={champs.password}>
+                <div className={'lp-field' + (champs.password ? ' lp-field--error' : '')}>
+                  <Lock size={16} className="lp-ico" />
+                  <Input id="mot-de-passe" type={visible ? 'text' : 'password'}
+                    placeholder="Mot de passe"
+                    autoComplete="current-password" disabled={busy}
+                    value={values.password}
+                    onChange={e => maj('password', e.target.value)}
+                    aria-invalid={Boolean(champs.password)}
+                    className={champs.password ? 'input--error' : ''} />
+                  <button type="button"
+                    className="lp-eye login-eye" tabIndex={-1}
+                    onClick={() => setVisible(v => !v)}
+                    aria-label={visible ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}>
+                    {visible ? <EyeOff size={17} /> : <Eye size={17} />}
+                  </button>
+                </div>
+              </Field>
 
               <div className="lp-row">
-                <a className="lp-forgot" href="#" onClick={(e) => e.preventDefault()}>Mot de passe oublié&nbsp;?</a>
+                <a className="lp-forgot" href="#" onClick={e => e.preventDefault()}
+                  title="Demandez à l’administrateur de le réinitialiser depuis l’écran « Utilisateurs »">
+                  Mot de passe oublié ?
+                </a>
               </div>
 
               <button type="submit" className="lp-btn" disabled={busy}>
-                {busy ? <span className="lp-spinner" aria-hidden="true" /> : <LogIn size={17} />}
-                {busy ? 'Connexion en cours…' : 'Se connecter'}
+                {busy
+                  ? <><span className="spinner spinner--btn lp-spinner" aria-hidden="true" /> Connexion…</>
+                  : <><LogIn size={17} /> {'Se connecter'}</>}
               </button>
             </form>
           </div>

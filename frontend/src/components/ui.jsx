@@ -6,9 +6,24 @@
 import { useEffect } from 'react';
 import { X } from 'lucide-react';
 
-export const Btn = ({ children, variant = 'default', size, icon: Icon, ...props }) => (
+// 2.7.32 — INFO-BULLE AUTOMATIQUE sur chaque bouton (teboka 5) : au survol,
+// le rôle du bouton apparaît. Si l'écran ne fournit pas de `title`, le libellé
+// visible (ou l'aria-label des boutons-icônes) est repris tel quel.
+const bulleDe = (title, ariaLabel, children) => {
+  if (title) return title;
+  if (ariaLabel) return ariaLabel;
+  if (typeof children === 'string') return children;
+  if (Array.isArray(children)) {
+    const texte = children.filter(morceau => typeof morceau === 'string').join(' ').trim();
+    return texte || undefined;
+  }
+  return undefined;
+};
+
+export const Btn = ({ children, variant = 'default', size, icon: Icon, title, ...props }) => (
   <button
     type={props.type || 'button'}
+    title={bulleDe(title, props['aria-label'], children)}
     className={`btn ${variant !== 'default' ? `btn--${variant}` : ''} ${size ? `btn--${size}` : ''}`}
     {...props}
   >
@@ -39,9 +54,23 @@ export const Field = ({ label, hint, error, children, className = '' }) => (
   </label>
 );
 
-export const Input = props => <input {...props} />;
-export const Select = ({ children, ...props }) => <select {...props}>{children}</select>;
-export const Textarea = props => <textarea {...props} />;
+// 2.7.32 — SIGNE sur les champs NON modifiables (teboka 8) : au survol de la
+// souris, une info-bulle « Lecture seule » explique l'état ; le cadenas 🔒 et
+// le curseur « interdit » viennent du CSS (.input--verrou / [disabled]).
+const titreVerrou = (title, props) => title
+  ?? ((props.disabled || props.readOnly)
+    ? 'Lecture seule : ce champ n’est pas modifiable ici. (Ouvrez le crayon pour modifier.)'
+    : undefined);
+
+export const Input = ({ title, ...props }) => (
+  <input title={titreVerrou(title, props)} className={props.disabled || props.readOnly ? `input--verrou ${props.className || ''}`.trim() : props.className} {...props} />
+);
+export const Select = ({ children, title, ...props }) => (
+  <select title={titreVerrou(title, props)} {...props}>{children}</select>
+);
+export const Textarea = ({ title, ...props }) => (
+  <textarea title={titreVerrou(title, props)} {...props} />
+);
 
 export const Check = ({ label, ...props }) => (
   <label className="check">
@@ -144,11 +173,17 @@ export const Choice = ({ options, value, onChange, columns }) => (
   </div>
 );
 
+// 2.7.66 — une colonne peut demander à être calée à DROITE
+// (2.7.67 : ou CENTRÉE — `center: true`, ex. « Action » au-dessus des boutons).
 export const Table = ({ columns, children, footer }) => (
   <div className="table-scroll">
     <table className="data">
       <thead>
-        <tr>{columns.map((column, index) => <th key={index} className={column.num ? 'num' : ''}>{column.label}</th>)}</tr>
+        <tr>{columns.map((column, index) => (
+          <th key={index} className={[column.num ? 'num' : '', column.right ? 'right' : '', column.center ? 'center' : ''].filter(Boolean).join(' ') || undefined}>
+            {column.label}
+          </th>
+        ))}</tr>
       </thead>
       <tbody>{children}</tbody>
       {footer ? <tfoot>{footer}</tfoot> : null}

@@ -24,7 +24,9 @@ export function salePrice(cost, rate, mode, minMargin, maxMargin) {
   const price = mode === MARGIN_MODES.COST
     ? costValue.mul(D(1).add(rateValue.div(100)))
     : costValue.div(D(1).sub(rateValue.div(100)));
-  return money(price);
+  // 2.7.49 — ENTIER SUPÉRIEUR (ceil) : le PV se vend en Ariary entier
+  // (ex. CMP 9 533,333333 × 1,15 = 10 963,332952… → 10 964 Ar).
+  return money(price.ceil());
 }
 
 /** Contrôle d'une plage de marge sans calcul de prix (création/modification d'un médicament). */

@@ -1,11 +1,12 @@
 // ============================================================================
 // Réceptions fournisseur (§9.4, RG03, RG12) : la marchandise livrée entre
-// TOUJOURS au DÉPÔT (jamais directement au comptoir). Frais répartis, création
-// ou mise à jour des lots, recalcul du coût de revient, du CMP et du prix de
-// vente. Le passage vers la pharmacie se fait ensuite par un TRANSFERT.
+// TOUJOURS au DÉPÔT (jamais directement au comptoir). Frais AUTOMATIQUES
+// (2.7.47), création ou mise à jour des lots, recalcul du coût de revient, du
+// CMP et du prix de vente. Le passage vers la pharmacie se fait ensuite par
+// un TRANSFERT.
 // ============================================================================
 import { Receipt, ReceiptLine, Lot, Product, Supplier } from '../models/index.js';
-import { D, money, distributeFees } from '../utils/money.js';
+import { D, money } from '../utils/money.js';
 import { ensure } from '../utils/errors.js';
 import { today } from '../utils/dates.js';
 import { normalizeLotNumber } from '../utils/sanitize.js';
@@ -16,8 +17,9 @@ import { recomputeProductCosting } from './pricing.service.js';
 import { getSettings } from './settings.service.js';
 import { log, publicSnapshot } from './audit.service.js';
 
-/** Vérifications de cohérence des dates d'un lot (RG02, §16). */
-function validateDates(line) {
+/** Vérifications de cohérence des dates d'un lot (RG02, §16).
+ *  Exportée pour la correction de réception (2.7.34, teboka ③). */
+export function validateDates(line) {
   // Date d'expiration obligatoire (2.7.1) : c'est elle qui alimente l'alerte de
   // péremption et l'ordre de sortie FEFO. Un lot sans date n'entre plus.
   ensure(line.expiresOn, `Lot ${line.number} : la date d'expiration est obligatoire.`);
@@ -29,6 +31,41 @@ function validateDates(line) {
   ensure(!line.manufacturedOn || line.manufacturedOn <= line.receivedOn,
     `Lot ${line.number} : la date de fabrication est postérieure à la réception.`);
 }
+
+// ============================================================================
+// 2.7.47 — COÛT DE REVIENT : frais AUTOMATIQUES, suivant la formule de
+// l'officine. Le champ manuel « Frais » de la réception est supprimé ; la part
+// de frais n'est plus saisie bon par bon, elle vient des Paramètres :
+//
+//     CU (coût unitaire) = PA + Frais,     avec Frais = feesRate % × PA
+//
+// feesRate (Paramètres → « Frais d'achat », 10 % par défaut, modifiable par
+// l'administrateur). Seuls les lots reçus APRÈS le réglage sont calculés ainsi ;
+// le CMP est ensuite la moyenne pondérée des coûts unitaires :
+//
+//     CMP = Σ(CU × quantité) ÷ Σ(quantité reçue)
+//     PV  = CMP + CMP × marge          (marge dans la plage min–max paramétrée)
+//
+// 2.7.49 — ENTIER SUPÉRIEUR (ceil) à l'Ariary près : le CU plafonne (la
+// comptabilité de l'officine ne raisonne pas en fraction d'Ariary sur un coût
+// unitaire) ; les frais de la ligne sont recalculés depuis ce plafond. Le prix
+// de vente est lui-même arrondi à l'entier supérieur (pricing.service).
+// ============================================================================
+/** Applique le pourcentage de frais d'achat aux lignes d'une réception. */
+export function appliquerFraisAchat(lines, feesRate) {
+  const taux = D(feesRate ?? 10).div(100);
+  return lines.map(line => {
+    // CU d'abord, arrondi à l'ENTIER SUPÉRIEUR (2.7.49), puis la part de frais
+    // de la ligne = (CU − PA) × quantité recalculée depuis ce plafond : la
+    // somme des parts reste cohérente avec le coût affiché du lot.
+    const unitCost = money(D(line.purchasePrice).mul(D(1).add(taux)).ceil());
+    const allocatedFees = money(D(unitCost).sub(line.purchasePrice).mul(line.quantity));
+    return { ...line, allocatedFees, unitCost };
+  });
+}
+
+/** Total informatif des frais automatiques d'une réception (impressions, rapport). */
+export const totalFraisAchat = lines => money(lines.reduce((acc, line) => acc.add(line.allocatedFees), D(0)));
 
 /**
  * Retrouve (ou crée) le lot d'une ligne de réception.
@@ -48,7 +85,7 @@ function validateDates(line) {
  * enregistrement (« lot MED-001-2026 déjà reçu à 1 000 Ar : enregistré comme
  * MED-001-2026·2 »).
  */
-async function resoudreLot({ produit, supplierId, location, ligne, transaction, ajustements }) {
+export async function resoudreLot({ produit, supplierId, location, ligne, transaction, ajustements }) {
   const base = String(ligne.number).trim();
   for (let rang = 1; rang <= 99; rang += 1) {
     const numero = rang === 1 ? base : `${base}·${rang}`;
@@ -61,6 +98,7 @@ async function resoudreLot({ produit, supplierId, location, ligne, transaction, 
       const cree = await Lot.create({
         productId: produit.id, supplierId, number: numero, location,
         receivedOn: ligne.receivedOn, manufacturedOn: ligne.manufacturedOn, expiresOn: ligne.expiresOn,
+        manufacturer: String(ligne.manufacturer || '').trim(),   // 2.7.49
         quantity: 0, receivedQuantity: ligne.quantity,
         purchasePrice: money(ligne.purchasePrice), allocatedFees: ligne.allocatedFees,
         unitCost: ligne.unitCost, status: STATUS.AVAILABLE
@@ -83,14 +121,19 @@ async function resoudreLot({ produit, supplierId, location, ligne, transaction, 
       // Même lot physique livré en deux fois : les quantités s'additionnent et le
       // coût de revient est recalculé sur l'ensemble :
       //   coût unitaire = prix d'achat + (frais cumulés ÷ quantité cumulée)
-      // (l'ancienne formule divisait aussi le PRIX D'ACHAT par la quantité, ce qui
-      // écrasait le coût : un lot de 100 + 50 unités à 1 000 Ar tombait à 6,67 Ar.)
+      // (les frais sont désormais automatiques — feesRate % du PA, 2.7.47 ; à PA
+      // constant le complétage redonne exactement le même CU.)
+      // L'ancienne formule divisait aussi le PRIX D'ACHAT par la quantité, ce qui
+      // écrasait le coût : un lot de 100 + 50 unités à 1 000 Ar tombait à 6,67 Ar.
       const totalQuantite = Number(existant.receivedQuantity) + Number(ligne.quantity);
       const totalFrais = D(existant.allocatedFees).add(ligne.allocatedFees);
       await existant.update({
         receivedQuantity: totalQuantite,
         allocatedFees: money(totalFrais),
-        unitCost: money(D(existant.purchasePrice).add(totalFrais.div(totalQuantite)))
+        unitCost: money(D(existant.purchasePrice).add(totalFrais.div(totalQuantite))),
+        // 2.7.49 — le fabricant saisi le plus récemment l'emporte s'il est
+        // renseigné (même numéro de lot ⇒ même fabricant en principe).
+        manufacturer: String(ligne.manufacturer || '').trim() || existant.manufacturer
       }, { transaction });
       return existant;
     }
@@ -116,8 +159,13 @@ export async function createReceipt(payload, user, transaction) {
   // Toute réception alimente le dépôt : la pharmacie est réapprovisionnée par transfert.
   const location = 'DEPOT';
 
-  // Répartition des frais directement attribuables (transport, service, manutention).
-  const lines = distributeFees(payload.lines.map(line => ({ ...line, number: normalizeLotNumber(line.number) })), payload.fees);
+  // 2.7.47 — frais AUTOMATIQUES (paramètre « feesRate », 10 % du PA par
+  // défaut). Le champ manuel « fees » de l'ancienne interface est accepté
+  // mais ignoré : il n'entre plus dans le coût.
+  const lines = appliquerFraisAchat(
+    payload.lines.map(line => ({ ...line, number: normalizeLotNumber(line.number) })),
+    settings.feesRate
+  );
   lines.forEach(validateDates);
   ensure(new Set(lines.map(l => `${l.productId}|${l.number}`)).size === lines.length,
     'Le même numéro de lot apparaît deux fois pour le même médicament dans cette réception.');
@@ -127,7 +175,9 @@ export async function createReceipt(payload, user, transaction) {
     location,
     supplierId: payload.supplierId,
     userId: user.id,
-    fees: money(payload.fees || 0),
+    // Frais enregistrés = total AUTOMATIQUE (paramètre feesRate), affiché
+    // sur le bon et dans les rapports ; la valeur saisie n'est plus utilisée.
+    fees: totalFraisAchat(lines),
     costTotal: '0.000000',
     note: payload.note || '',
     status: STATUS.VALIDATED,
@@ -146,6 +196,14 @@ export async function createReceipt(payload, user, transaction) {
     ensure(product, `Médicament introuvable (ligne ${line.number}).`, 404);
     ensure(product.active, `Médicament « ${product.name} » inactif : réception refusée.`);
 
+    // 2.7.31 — l'« Unité de gestion » ne se saisit plus dans la fiche médicament
+    // mais À LA RÉCEPTION (boîte, flacon, pièce, plaquette…, choix dépôt) ; elle
+    // est REPORTÉE sur la fiche — l'unité reste unique par médicament, pour que
+    // stock, CMP et prix restent cohérents d'une réception à l'autre.
+    if (line.unit && line.unit !== product.unit) {
+      await product.update({ unit: line.unit }, { transaction });
+    }
+
     // Même numéro de lot, nouvelle livraison à un autre prix : un lot distinct est
     // créé automatiquement (voir resoudreLot) — la réception n'est jamais refusée.
     const lot = await resoudreLot({
@@ -156,7 +214,8 @@ export async function createReceipt(payload, user, transaction) {
       receiptId: receipt.id, productId: product.id, lotId: lot.id,
       number: lot.number, quantity: line.quantity, purchasePrice: money(line.purchasePrice),
       allocatedFees: line.allocatedFees, unitCost: line.unitCost,
-      receivedOn: line.receivedOn, expiresOn: line.expiresOn, manufacturedOn: line.manufacturedOn
+      receivedOn: line.receivedOn, expiresOn: line.expiresOn, manufacturedOn: line.manufacturedOn,
+      manufacturer: String(line.manufacturer || '').trim()     // 2.7.49
     }, { transaction });
 
     movementLines.push({ productId: product.id, lotId: lot.id, quantity: Number(line.quantity), unitCost: line.unitCost });

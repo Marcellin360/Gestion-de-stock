@@ -4,14 +4,23 @@
 // (supprimer le fournisseur). La suppression est définitive — le serveur la
 // refuse quand le fournisseur a déjà livré, et le message explique alors
 // qu'il faut simplement le désactiver pour garder l'historique lisible.
+//
+// 2.7.78 — présentation demandée par l'officine (même convention que les
+//   réceptions, les transferts, les pertes et les catégories) :
+//   • le libellé du filtre redevient « Recherche » (plus de « (LIKE) ») et
+//     la case passe à DROITE du titre, dans l'en-tête de la carte ;
+//   • la colonne des gestes s'intitule « Action » et son contenu est CENTRÉ ;
+//   • « Modifier » (bleu), « Supprimer » (rouge) : boutons PLEINS de la famille
+//     détail / suppression, avec un espace visible entre eux (.actes).
 import { useState } from 'react';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { referentials } from '../api/endpoints.js';
 import { useData } from '../context/DataContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
-import { Badge, Banner, Btn, Card, Empty, ErrorBox, Modal, Table } from '../components/ui.jsx';
+import { Badge, Banner, Btn, Card, Empty, ErrorBox, Field, Input, Modal, Table } from '../components/ui.jsx';
 import SupplierForm from '../forms/SupplierForm.jsx';
 import { money } from '../utils/format.js';
+import { COULEUR_DETAIL, COULEUR_ANNULER } from '../components/SaleHistoryModal.jsx';
 
 export default function SuppliersPage() {
   const { suppliers, documents, refresh } = useData();
@@ -21,6 +30,16 @@ export default function SuppliersPage() {
   const [error, setError] = useState(null);
   const [erreurSuppression, setErreurSuppression] = useState(null);
   const [busy, setBusy] = useState(false);
+  // La recherche filtre par nom, contact, téléphone, adresse, NIF (2.7.78 :
+  // libellé « Recherche » tout court, case à droite du titre — comme les
+  // réceptions, les catégories et les pertes).
+  const [recherche, setRecherche] = useState('');
+  const visibles = suppliers.filter(fournisseur => {
+    if (!recherche) return true;
+    const cible = [fournisseur.name, fournisseur.contact, fournisseur.phone, fournisseur.address, fournisseur.nif, fournisseur.email]
+      .join(' ').toLowerCase();
+    return cible.includes(recherche.toLowerCase());
+  });
 
   const achats = supplierId => documents
     .filter(doc => doc.kind === 'RECEIPT' && Number(doc.supplierId) === Number(supplierId) && doc.status === 'VALIDATED')
@@ -44,14 +63,22 @@ export default function SuppliersPage() {
   return (
     <>
       <Card title={`${suppliers.length} fournisseur(s)`}
-        actions={<Btn variant="primary" icon={Plus} onClick={() => setEdition('nouveau')}>Nouveau fournisseur</Btn>}>
+        actions={<>
+          <Field label="Recherche">
+            <Input value={recherche} onChange={e => setRecherche(e.target.value)}
+              placeholder="Nom, contact, téléphone, adresse, NIF…" title="Filtrer : une partie du nom, du contact, du téléphone, de l'adresse ou du NIF suffit" />
+          </Field>
+          <Btn variant="primary" icon={Plus} onClick={() => setEdition('nouveau')}>Nouveau fournisseur</Btn>
+        </>}>
         <ErrorBox error={error} />
         {suppliers.length === 0 ? <Empty>Aucun fournisseur enregistré.</Empty> : (
           <Table columns={[
             { label: 'Fournisseur' }, { label: 'Contact' }, { label: 'Téléphone' },
-            { label: 'Adresse' }, { label: 'Achats récents', num: true }, { label: 'État' }, { label: 'Actions' }
+            { label: 'Adresse' }, { label: 'Achats récents', num: true }, { label: 'État' },
+            // 2.7.78 — colonne des gestes CENTRÉE (comme réceptions/transferts/pertes).
+            { label: 'Action', center: true }
           ]}>
-            {suppliers.map(fournisseur => (
+            {visibles.map(fournisseur => (
               <tr key={fournisseur.id}>
                 <td><strong>{fournisseur.name}</strong>{fournisseur.nif ? <div className="muted" style={{ fontSize: '.78rem' }}>NIF {fournisseur.nif}</div> : null}</td>
                 <td>{fournisseur.contact || '—'}{fournisseur.email ? <div className="muted" style={{ fontSize: '.78rem' }}>{fournisseur.email}</div> : null}</td>
@@ -59,11 +86,13 @@ export default function SuppliersPage() {
                 <td className="wrap">{fournisseur.address || '—'}</td>
                 <td className="num">{money(achats(fournisseur.id))}</td>
                 <td>{fournisseur.active ? <Badge tone="ok">actif</Badge> : <Badge tone="danger">inactif</Badge>}</td>
-                <td className="right">
-                  <span className="row" style={{ gap: 4, justifyContent: 'flex-end' }}>
-                    <Btn variant="ghost" icon={Pencil} title={`Modifier ${fournisseur.name}`}
+                {/* 2.7.78 — gestes CENTRÉS, PLEINS et espacés : Modifier bleu,
+                    Supprimer rouge (mêmes couleurs que partout). */}
+                <td className="center nowrap">
+                  <span className="actes">
+                    <Btn variant="ghost" style={COULEUR_DETAIL} icon={Pencil} title={`Modifier ${fournisseur.name}`}
                       onClick={() => { setErreurSuppression(null); setEdition(fournisseur); }} aria-label="Modifier" />
-                    <Btn variant="ghost" icon={Trash2} title={`Supprimer ${fournisseur.name}`}
+                    <Btn variant="ghost" style={COULEUR_ANNULER} icon={Trash2} title={`Supprimer ${fournisseur.name}`}
                       onClick={() => { setError(null); setErreurSuppression(null); setSuppression(fournisseur); }} aria-label="Supprimer" />
                   </span>
                 </td>

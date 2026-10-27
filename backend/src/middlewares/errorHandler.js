@@ -37,9 +37,13 @@ export function errorHandler(error, req, res, next) { // eslint-disable-line no-
   }
   const status = error instanceof BusinessError ? error.status : (error.status || 500);
   if (status >= 500) console.error(`[${new Date().toISOString()}]`, req.method, req.originalUrl, error.message, config.production ? '' : error.stack);
-  return res.status(500).json({
+    return res.status(status).json({
     error: status >= 500
       ? 'Erreur interne. Aucune validation partielle : l’opération a été annulée. Consulter le journal du serveur.'
-      : error.message
+      : error.message,
+    // 2.7.60 — HORS PRODUCTION : la cause réelle est jointe (le garde-fou
+    // « pas de PDF » du frontal l'affiche alors à l'écran ; p. ex. colonne
+    // discharged_on absente si la migration 013 n'a pas été jouée).
+    ...(status >= 500 && !config.production ? { detail: error.message } : {})
   });
 }

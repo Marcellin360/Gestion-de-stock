@@ -81,6 +81,9 @@ export function DataProvider({ children }) {
       inventories: data?.inventories || [],
       alerts: data?.alerts || [],
       stats: data?.stats || {},
+      // 2.7.33 — teboka ⑮ : chiffres du MOIS EN COURS calculés par le serveur
+      // (comptoir : ventes/marge/pertes ; réserve : achats/transferts).
+      month: data?.month || null,
       settings: data?.settings || {},
       stats2: data?.stats || {},
       productName: id => byId(products, id)?.name || `Médicament #${id}`,

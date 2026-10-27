@@ -13,16 +13,18 @@
 // Les chiffres viennent du serveur (`/api/reports`) : l'écran ne calcule rien.
 // ============================================================================
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Download, Printer, RefreshCw, Warehouse, ShoppingCart } from 'lucide-react';
+import { ClipboardList, Download, Printer, RefreshCw, Warehouse, ShoppingCart } from 'lucide-react';
 import { reports } from '../api/endpoints.js';
 import { downloadCsv, openPrintable } from '../api/client.js';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useData } from '../context/DataContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
-import { Badge, Banner, Btn, Card, Check, Empty, ErrorBox, Field, Input, Select, Table } from '../components/ui.jsx';
-import { addDays, integer, monthStart, money, today } from '../utils/format.js';
+import { Badge, Banner, Btn, Card, Check, Empty, ErrorBox, Field, Input, Modal, Select, Table } from '../components/ui.jsx';
+import { addDays, dateTime, integer, monthStart, money, today } from '../utils/format.js';
 
 export default function FicheStockTab() {
   const { user } = useAuth();
+  const { products } = useData();
   const toast = useToast();
   // Le dépôt travaille uniquement sur la réserve : son magasin est figé.
   const estDepot = user?.roleCode === 'DEPOT';
@@ -35,6 +37,12 @@ export default function FicheStockTab() {
   const [masquerVides, setMasquerVides] = useState(false);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  // 2.7.33 — teboka ⑪ FICHE DE STOCK D'UN PRODUIT : chaque ligne du registre
+  // a son bouton « Fiche » → modale des mouvements (Date · Document · Entrée ·
+  // Sortie · Solde cumulé), imprimable. Comme sur papier : une fiche par article.
+  const [fiche, setFiche] = useState(null); // { produit, ligne }
+  const [mouvements, setMouvements] = useState(null);
+  const [ficheError, setFicheError] = useState(null);
 
   // Un type de rapport par magasin : le serveur choisit alors les bons mouvements.
   const type = magasin === 'DEPOT' ? 'fiche_depot' : 'fiche';
@@ -68,6 +76,30 @@ export default function FicheStockTab() {
   }), { initial: 0, entrees: 0, sorties: 0, final: 0, valeur: 0 }), [lignes]);
 
   const libelleMagasin = magasin === 'DEPOT' ? 'Dépôt (réserve)' : 'Pharmacie (comptoir)';
+
+  // Teboka ⑪ : ouverture de la fiche individuelle d'un médicament — le
+  // produit est retrouvé par son code (affiché dans le registre), puis ses
+  // mouvements de la période sont demandés au serveur (magasin courant).
+  const ouvrirFiche = async ligne => {
+    const produit = (products || []).find(p => p.code === ligne.Code)
+      || (products || []).find(p => p.name === ligne['Médicament']);
+    if (!produit) {
+      toast.error(`Médicament « ${ligne['Médicament']} » introuvable dans le catalogue chargé.`);
+      return;
+    }
+    setFiche({ produit, ligne });
+    setMouvements(null);
+    setFicheError(null);
+    try {
+      const reponse = await reports.load({
+        type: 'fiche_produit', productId: produit.id,
+        from: filtres.from, to: filtres.to, location: magasin
+      });
+      setMouvements(reponse.rows || []);
+    } catch (cause) {
+      setFicheError(cause);
+    }
+  };
 
   const imprimer = () => openPrintable(`/reports/print?type=${type}&from=${filtres.from}&to=${filtres.to}`);
 
@@ -150,7 +182,8 @@ export default function FicheStockTab() {
               { label: 'Entrées', num: true },
               { label: 'Sorties', num: true },
               { label: 'Stock final', num: true },
-              { label: 'Coût unitaire (Ar)', num: true }
+              { label: 'Coût unitaire (Ar)', num: true },
+              { label: '' }
             ]}>
               {lignes.map((ligne, index) => (
                 <tr key={ligne.Code || index}>
@@ -163,6 +196,12 @@ export default function FicheStockTab() {
                   <td className="num">{ligne['Sorties'] ? <strong>{integer(ligne['Sorties'])}</strong> : integer(0)}</td>
                   <td className="num">{integer(ligne['Stock final'])}</td>
                   <td className="num">{money(ligne['Coût unitaire (Ar)'])}</td>
+                  <td className="right nowrap">
+                    {/* ⑪ Fiche individuelle du médicament (mouvements + solde). */}
+                    <Btn variant="ghost" icon={ClipboardList} onClick={() => ouvrirFiche(ligne)}
+                      aria-label={`Fiche de stock de ${ligne['Médicament']}`}
+                      title={`Fiche de stock de « ${ligne['Médicament']} » : tous les mouvements de la période avec le solde après chaque ligne`} />
+                  </td>
                 </tr>
               ))}
             </Table>
@@ -190,6 +229,76 @@ export default function FicheStockTab() {
           {' '}Magasin de cette fiche : {magasin === 'DEPOT' ? <><Warehouse size={14} /> Dépôt (réserve)</> : <><ShoppingCart size={14} /> Pharmacie (comptoir)</>}.
         </p>
       </Card>
+
+      {/* ⑪ FICHE DE STOCK D'UN PRODUIT : tous ses mouvements de la période,
+          dans l'ordre, avec le solde après chaque ligne (la fiche d'article du
+          registre papier). Le récapitulatif reprend les chiffres du registre. */}
+      {fiche ? (
+        <Modal wide
+          title={`Fiche de stock — ${fiche.produit.name} (${libelleMagasin.toLowerCase()})`}
+          onClose={() => setFiche(null)}
+          footer={<>
+            <Btn icon={Printer}
+              onClick={() => openPrintable(`/reports/print?type=fiche_produit&productId=${fiche.produit.id}&from=${filtres.from}&to=${filtres.to}&location=${magasin}`)}>
+              Imprimer la fiche
+            </Btn>
+            <Btn variant="primary" onClick={() => setFiche(null)}>Fermer</Btn>
+          </>}>
+          <div className="row" style={{ flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+            <Badge tone="info">{fiche.produit.code}</Badge>
+            <Badge tone="default">Stock initial : {integer(fiche.ligne['Stock initial'])}</Badge>
+            <Badge tone="ok">Entrées : {integer(fiche.ligne['Entrées'])}</Badge>
+            <Badge tone="warn">Sorties : {integer(fiche.ligne['Sorties'])}</Badge>
+            <Badge tone="info">Stock final : {integer(fiche.ligne['Stock final'])} {fiche.produit.unit || ''}</Badge>
+          </div>
+          {ficheError ? <div style={{ marginBottom: 10 }}><ErrorBox error={ficheError} /></div> : null}
+          {!mouvements && !ficheError ? (
+            <Empty>Chargement des mouvements de la période…</Empty>
+          ) : mouvements && mouvements.length === 0 ? (
+            <Empty>
+              <ClipboardList size={22} /> Aucun mouvement entre le{' '}
+              {new Date(`${filtres.from}T12:00:00`).toLocaleDateString('fr-FR')} et le{' '}
+              {new Date(`${filtres.to}T12:00:00`).toLocaleDateString('fr-FR')} pour ce médicament
+              dans ce magasin — le stock n'a pas bougé sur la période.
+            </Empty>
+          ) : mouvements ? (
+            <div className="table-scroll">
+              <table className="data">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Document</th>
+                    <th>Nature</th>
+                    <th>Lot</th>
+                    <th className="num">Entrées</th>
+                    <th className="num">Sorties</th>
+                    <th className="num">Solde</th>
+                    <th className="num">Coût unitaire (Ar)</th>
+                    <th>Par</th>
+                    <th>Motif</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {mouvements.map((mvt, index) => (
+                    <tr key={index}>
+                      <td>{dateTime(mvt['Date'])}</td>
+                      <td>{mvt['Document']}</td>
+                      <td>{mvt['Nature']}</td>
+                      <td>{mvt['Lot']}</td>
+                      <td className="num">{mvt['Entrées'] ? <strong>{integer(mvt['Entrées'])}</strong> : ''}</td>
+                      <td className="num">{mvt['Sorties'] ? <strong>{integer(mvt['Sorties'])}</strong> : ''}</td>
+                      <td className="num"><strong>{integer(mvt['Solde'])}</strong></td>
+                      <td className="num">{money(mvt['Coût unitaire (Ar)'])}</td>
+                      <td className="wrap">{mvt['Utilisateur']}</td>
+                      <td className="wrap">{mvt['Motif'] || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </Modal>
+      ) : null}
     </>
   );
 }

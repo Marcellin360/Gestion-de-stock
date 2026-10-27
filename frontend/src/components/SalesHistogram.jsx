@@ -1,11 +1,16 @@
 // ============================================================================
-// 2.7.18 — HISTOGRAMME DES VENTES MENSUELLES (tableau de bord de la pharmacie).
+// 2.7.18 — COURBE DES VENTES MENSUELLES (tableau de bord de la pharmacie).
 //
-// « Total ny vidin'ny lafo isam-bolana » : douze barres, une par mois glissant,
+// « Total ny vidin'ny lafo isam-bolana » : douze points, un par mois glissant,
 // hauteur proportionnelle au CHIFFRE D'AFFAIRES du mois ; le mois courant est
-// mis en valeur. Survol / titre de chaque barre : nombre de ventes, CA, marge.
-// Dessin en SVG pur : aucune bibliothèque, léger, imprimable.
-// Source : GET /api/data/sales-monthly.
+// mis en valeur (colonne discrètement teintée + valeur affichée). Survol /
+// titre de chaque point : nombre de ventes, CA, marge. Dessin en SVG pur :
+// aucune bibliothèque, léger, imprimable. Source : GET /api/data/sales-monthly.
+//
+// 2.7.76 — présentation PROFESSIONNELLE légère (demande de l'officine, adieu
+// le thème sombre essayé) : courbe lissée turquoise sur aire très légère,
+// trames fines, libellés ardoise — cohérent avec le thème clair du logiciel.
+// Mêmes données, mêmes infobulles : seule la forme change, jamais le calcul.
 // ============================================================================
 import { useEffect, useMemo, useState } from 'react';
 import { BarChart3 } from 'lucide-react';
@@ -16,6 +21,16 @@ import { integer, money } from '../utils/format.js';
 
 const NOMS_COURTS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin',
   'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+
+/** Courbe lissée (splines cubiques point milieu) : joli sans bibliothèque. */
+function cheminLisse(points) {
+  return points.map((point, index) => {
+    if (index === 0) return `M ${point.x} ${point.y}`;
+    const avant = points[index - 1];
+    const milieuX = (avant.x + point.x) / 2;
+    return `C ${milieuX} ${avant.y}, ${milieuX} ${point.y}, ${point.x} ${point.y}`;
+  }).join(' ');
+}
 
 export default function SalesHistogram() {
   const toast = useToast();
@@ -38,7 +53,7 @@ export default function SalesHistogram() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Les barres couvrent TOUJOURS 12 mois : un mois sans vente reste à zéro
+  // Les points couvrent TOUJOURS 12 mois : un mois sans vente reste à zéro
   // (sinon l'échelle saute d'un mois à l'autre).
   const barres = useMemo(() => {
     if (!mois) return [];
@@ -58,10 +73,26 @@ export default function SalesHistogram() {
     count: acc.count + Number(barre.count), total: acc.total + Number(barre.total), margin: acc.margin + Number(barre.margin)
   }), { count: 0, total: 0, margin: 0 }), [barres]);
 
-  // SVG : 12 barres + un texte de valeur en pointe, libellé mois au pied.
-  const W = 720; const H = 220; const PAD = { haut: 26, bas: 34, cote: 8 };
-  const largeurBarre = (W - PAD.cote * 2) / 12;
+  // SVG : trames + aire légère + courbe lissée + mois au pied.
+  const W = 760; const H = 240; const PAD = { haut: 34, bas: 36, cote: 12 };
+  const pas = (W - PAD.cote * 2) / 12;
+  const ligneBase = H - PAD.bas;
   const moisCourant = new Date().toISOString().slice(0, 7);
+
+  const points = barres.map((barre, index) => {
+    const valeur = Number(barre.total) || 0;
+    const ratio = valeur > 0 ? Math.max(0.035, valeur / plafond) : 0;
+    return {
+      barre, valeur,
+      x: PAD.cote + index * pas + pas / 2,
+      y: ligneBase - ratio * (ligneBase - PAD.haut)
+    };
+  });
+  const courant = points.find(point => point.barre.cle === moisCourant);
+  const chemin = points.length ? cheminLisse(points) : '';
+  const aire = chemin && points.length
+    ? `${chemin} L ${points[points.length - 1].x} ${ligneBase} L ${points[0].x} ${ligneBase} Z`
+    : '';
 
   return (
     <Card title={<span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -72,45 +103,72 @@ export default function SalesHistogram() {
         <Empty>Aucune vente validée sur les 12 derniers mois.</Empty>
       ) : (
         <>
-          <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Histogramme des ventes mensuelles"
+          <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Courbe des ventes mensuelles"
             style={{ width: '100%', height: 'auto', display: 'block' }}>
-            {/* Ligne de base */}
-            <line x1={PAD.cote} y1={H - PAD.bas} x2={W - PAD.cote} y2={H - PAD.bas}
+            <defs>
+              <linearGradient id="degradeAireVentes" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#12897f" stopOpacity="0.20" />
+                <stop offset="100%" stopColor="#12897f" stopOpacity="0.02" />
+              </linearGradient>
+            </defs>
+
+            {/* Trames horizontales discrètes, à peine marquées. */}
+            {[0.33, 0.66].map(ratio => (
+              <line key={ratio} x1={PAD.cote} x2={W - PAD.cote}
+                y1={ligneBase - ratio * (ligneBase - PAD.haut)} y2={ligneBase - ratio * (ligneBase - PAD.haut)}
+                stroke="#e2e8f0" strokeWidth="1" strokeDasharray="4 5" />
+            ))}
+            {/* Ligne de base. */}
+            <line x1={PAD.cote} y1={ligneBase} x2={W - PAD.cote} y2={ligneBase}
               stroke="#cbd5e1" strokeWidth="1" />
-            {barres.map((barre, index) => {
-              const valeur = Number(barre.total) || 0;
-              const hauteur = valeur > 0 ? Math.max(3, (valeur / plafond) * (H - PAD.haut - PAD.bas)) : 0;
-              const x = PAD.cote + index * largeurBarre + largeurBarre * 0.15;
-              const y = H - PAD.bas - hauteur;
-              const courant = barre.cle === moisCourant;
-              return (
-                <g key={barre.cle}>
-                  <title>
-                    {`${NOMS_COURTS[barre.m]} ${barre.annee} — ${integer(barre.count)} vente(s) · encaissé ${money(valeur)} · marge ${money(barre.margin)}`}
-                  </title>
-                  <rect x={x} y={y} width={largeurBarre * 0.7} height={hauteur} rx={3}
-                    fill={courant ? '#2563eb' : '#93c5fd'} />
-                  {valeur > 0 ? (
-                    <text x={x + largeurBarre * 0.35} y={y - 5} textAnchor="middle"
-                      fontSize="9" fill={courant ? '#1e3a8a' : '#475569'}>
-                      {money(valeur).replace(/\s?Ar$/, ' Ar')}
-                    </text>
-                  ) : null}
-                  <text x={x + largeurBarre * 0.35} y={H - PAD.bas + 14} textAnchor="middle"
-                    fontSize="9" fill="#64748b">
-                    {NOMS_COURTS[barre.m]}
-                  </text>
-                  {/* L'année n'apparaît que sous janvier (limites propres). */}
-                  {barre.m === 0 || index === 0 ? (
-                    <text x={x + largeurBarre * 0.35} y={H - PAD.bas + 26} textAnchor="middle"
-                      fontSize="9" fontWeight="600" fill="#475569">{barre.annee}</text>
-                  ) : null}
-                </g>
-              );
-            })}
+
+            {/* Colonne du mois courant, très légèrement teintée. */}
+            {courant ? (
+              <rect x={courant.x - pas / 2} y={PAD.haut} width={pas} height={ligneBase - PAD.haut}
+                rx={7} fill="rgba(18, 137, 127, 0.07)" stroke="#99d6cd" strokeOpacity="0.6" />
+            ) : null}
+
+            {/* Aire légère + trait de la courbe. */}
+            <path d={aire} fill="url(#degradeAireVentes)" stroke="none" />
+            <path d={chemin} fill="none" stroke="#0f766e" strokeWidth="2.2"
+              strokeLinecap="round" strokeLinejoin="round" />
+
+            {points.map((point, index) => (
+              <g key={point.barre.cle}>
+                {/* Infobulle conservée : ventes · encaissé · marge du mois. */}
+                <title>
+                  {`${NOMS_COURTS[point.barre.m]} ${point.barre.annee} — ${integer(point.barre.count)} vente(s) · encaissé ${money(point.valeur)} · marge ${money(point.barre.margin)}`}
+                </title>
+                {/* Zone de survol couvrant toute la tranche du mois. */}
+                <rect x={point.x - pas / 2} y={PAD.haut} width={pas} height={ligneBase - PAD.haut}
+                  fill="transparent" />
+                {point.valeur > 0 ? (
+                  <circle cx={point.x} cy={point.y} r={point.barre.cle === moisCourant ? 4 : 2.6}
+                    fill="#12897f" stroke="#ffffff" strokeWidth="1.4" />
+                ) : null}
+                <text x={point.x} y={ligneBase + 14} textAnchor="middle"
+                  fontSize="9" fill="#64748b">
+                  {NOMS_COURTS[point.barre.m]}
+                </text>
+                {/* L'année n'apparaît que sous janvier (limites propres). */}
+                {point.barre.m === 0 || index === 0 ? (
+                  <text x={point.x} y={ligneBase + 27} textAnchor="middle"
+                    fontSize="9" fontWeight="600" fill="#475569">{point.barre.annee}</text>
+                ) : null}
+              </g>
+            ))}
+
+            {/* Valeur du mois courant, affichée au-dessus de son point. */}
+            {courant && courant.valeur > 0 ? (
+              <text x={Math.min(courant.x, W - 70)} y={Math.max(12, courant.y - 10)} textAnchor="middle"
+                fontSize="10.5" fontWeight="700" fill="#0f766e">
+                {money(courant.valeur).replace(/\s?Ar$/, ' Ar')}
+              </text>
+            ) : null}
           </svg>
           <p className="muted" style={{ fontSize: '.8rem', margin: '6px 0 0' }}>
-            Le mois en cours est en bleu foncé ; survolez une barre pour le détail
+            La courbe suit le total encaissé chaque mois ; le mois en cours est teinté et
+            sa valeur affichée au-dessus. Survolez le graphique pour le détail
             (ventes · encaissé · marge). Détail jour par jour : menu « Calendrier des ventes ».
           </p>
         </>

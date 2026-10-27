@@ -41,7 +41,14 @@ export async function documentLines(kind, id, transaction) {
   return lineModel.findAll({ where: { [foreignKey]: id }, order: [['id', 'ASC']], transaction });
 }
 
-const shape = (document, kind) => ({
+// 2.7.79 — « Servi par » saisi à la caisse : la note d'une vente peut porter
+// le marqueur ⟦Servi par : X⟧ en tête (utils/serviPar.js). On le SÉPARE pour
+// l'affichage : la remarque rendue est nettoyée, le nom voyage à part.
+import { decortiquerNote } from '../utils/serviPar.js';
+
+const shape = (document, kind) => {
+  const servi = kind === 'SALE' ? decortiquerNote(document.note) : { servedBy: '', note: null };
+  return {
   kind,
   reference: document.reference,
   id: document.id,
@@ -53,8 +60,13 @@ const shape = (document, kind) => ({
   supplierId: document.supplierId ?? null,
   status: document.status,
   reason: document.reason ?? '',
-  note: document.note ?? '',
+  note: kind === 'SALE' ? servi.note : (document.note ?? ''),
+  // 2.7.79 — nom « Servi par » saisi à la caisse ('' = le compte connecté).
+  servedBy: servi.servedBy,
   customerName: document.customerName ?? '',
+  // 2.7.35 — hôpital : le carnet éventuel (null = client tsotra du comptoir).
+  patientId: document.patientId ?? null,
+  medicalStaffId: document.medicalStaffId ?? null,
   invoiceRef: document.invoiceRef ?? '',
   inventoryId: document.inventoryId ?? null,
   total: document.total ?? '0.000000',
@@ -63,7 +75,8 @@ const shape = (document, kind) => ({
   fees: document.fees ?? '0.000000',
   cancelledAt: document.cancelledAt ?? null,
   cancelReason: document.cancelReason ?? null
-});
+  };
+};
 
 /** Libellé lisible du magasin d'un document (utilisé par les écrans). */
 export const documentLocation = document =>
@@ -76,9 +89,52 @@ export async function listRecent(limit = 300, transaction) {
     const rows = await model.findAll({ order: [['id', 'DESC']], limit, transaction });
     return rows.map(row => shape(row.toJSON(), kind));
   }));
-  return results.flat()
+  const documents = results.flat()
     .sort((a, b) => new Date(b.date) - new Date(a.date) || b.id - a.id)
     .slice(0, limit);
+
+  // 2.7.31 — les listes « Réceptions » et « Transferts » affichent directement
+  // le contenu (médicaments, quantités, coût unitaire) : chaque document
+  // RECEIPT / TRANSFER emporte ses lignes synthétiques, chargées en deux
+  // requêtes groupées (pas de requête par ligne à l'écran).
+  const joindre = async (kindDocuments, lineModel, foreignKey) => {
+    if (!kindDocuments.length) return;
+    const lignes = await lineModel.findAll({
+      where: { [foreignKey]: kindDocuments.map(doc => doc.id) }, transaction
+    });
+    const parDocument = new Map();
+    for (const ligne of lignes) {
+      const cle = ligne[foreignKey];
+      if (!parDocument.has(cle)) parDocument.set(cle, []);
+      // 2.7.49 — « manufacturer » existe sur les lignes de RÉCEPTION (lot par
+      // lot) ; il est vide/ignoré sur les lignes de transfert.
+      parDocument.get(cle).push({
+        productId: ligne.productId, quantity: ligne.quantity, unitCost: ligne.unitCost,
+        manufacturer: ligne.manufacturer || ''
+      });
+    }
+    for (const doc of kindDocuments) doc.lines = parDocument.get(doc.id) || [];
+  };
+  await joindre(documents.filter(doc => doc.kind === 'RECEIPT'), ReceiptLine, 'receiptId');
+  await joindre(documents.filter(doc => doc.kind === 'TRANSFER'), TransferLine, 'transferId');
+  // 2.7.37 — l'historique « clients tsotra » affiche, par vente, le(s)
+  // médicament(s) vendu(s) avec quantité et prix unitaire (sans marge) : les
+  // lignes de SALE sont embarquées de la façon (nom résolu côté écran).
+  const ventes = documents.filter(doc => doc.kind === 'SALE');
+  if (ventes.length) {
+    const lignes = await SaleLine.findAll({ where: { saleId: ventes.map(doc => doc.id) }, transaction });
+    const parVente = new Map();
+    for (const ligne of lignes) {
+      if (!parVente.has(ligne.saleId)) parVente.set(ligne.saleId, []);
+      parVente.get(ligne.saleId).push({
+        productId: ligne.productId, saleUnit: ligne.saleUnit || 'BOX',
+        saleQuantity: ligne.saleQuantity != null ? ligne.saleQuantity : null,
+        quantity: ligne.quantity, unitPrice: ligne.unitPrice
+      });
+    }
+    for (const doc of ventes) doc.lines = parVente.get(doc.id) || [];
+  }
+  return documents;
 }
 
 export async function documentDetail(kind, id, transaction) {

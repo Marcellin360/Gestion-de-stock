@@ -4,7 +4,11 @@ import crypto from 'node:crypto';
 export const uuid = () => crypto.randomUUID();
 
 const PREFIXES = {
-  RECEIPT: 'REC', TRANSFER: 'TRF', SALE: 'VTE', LOSS: 'PRT', ADJUSTMENT: 'AJU', INVENTORY: 'INV'
+  RECEIPT: 'REC', TRANSFER: 'TRF', SALE: 'VTE', LOSS: 'PRT', ADJUSTMENT: 'AJU', INVENTORY: 'INV',
+  // 2.7.34 — demandes de correction de réception (teboka ③).
+  CORRECTION: 'COR',
+  // 2.7.79 — demandes de correction de transfert (même workflow, dépôt → admin).
+  TRANSFER_CORRECTION: 'TRC'
 };
 
 /**

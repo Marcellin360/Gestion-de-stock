@@ -63,7 +63,7 @@ export default function LossForm({ onDone, onCancel }) {
     <form onSubmit={soumettre}>
       <ErrorBox error={error} />
       <div className="grid grid--2">
-          {user?.roleCode === 'DEPOT' ? (
+        {user?.roleCode === 'DEPOT' ? (
           <Field label="Magasin concerné" hint="Votre profil travaille sur la réserve : la perte ou le don se déclare au dépôt.">
             <Input value="Dépôt (réserve)" readOnly />
           </Field>
@@ -99,7 +99,8 @@ export default function LossForm({ onDone, onCancel }) {
                     <Select value={ligne.lotId} onChange={e => maj(index, { lotId: e.target.value })} required>
                       <option value="">— choisir un lot —</option>
                       {lotsDisponibles.map(item => (
-                        <option key={item.id} value={item.id}>
+                        <option key={item.id} value={item.id}
+                          title={`${productName(item.productId)} · lot ${item.number} — stock restant de ce lot : ${integer(item.quantity)} ${entete.location === 'DEPOT' ? '(dépôt)' : '(comptoir)'}`}>
                           {productName(item.productId)} · lot {item.number} {item.expiresOn ? `(exp. ${item.expiresOn})` : '(sans date)'}
                         </option>
                       ))}

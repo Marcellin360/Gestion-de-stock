@@ -2,6 +2,7 @@
 // Point d'assemblage de l'API : routes publiques, puis authentification,
 // puis modules protégés par permission. Chaque écriture est limitée en débit.
 // ============================================================================
+import { VERSION_APPLI } from '../utils/version.js';
 import { Router } from 'express';
 import { asyncHandler } from '../middlewares/asyncHandler.js';
 import { requireAuth } from '../middlewares/authenticate.js';
@@ -13,6 +14,7 @@ import userRoutes from './users.routes.js';
 import referenceRoutes from './reference.routes.js';
 import stockRoutes from './stock.routes.js';
 import documentRoutes from './documents.routes.js';
+import hopitalRoutes from './hopital.routes.js';
 import reportRoutes from './reports.routes.js';
 import settingsRoutes from './settings.routes.js';
 import { getData, getSalesCalendar, getSalesMonthly, getStockCalendar, getStockFlowMonthly } from '../controllers/dashboard.controller.js';
@@ -22,6 +24,16 @@ export function apiRoutes() {
   const router = Router();
 
   router.use(originGuard, noStore);
+
+  // 2.7.62 — EMPREINTE du serveur réel : chaque réponse de l'API porte la
+  // version du code de PharmaStock. Le garde-fou « pas de PDF » s'en sert
+  // pour PROUVER si c'est bien NOTRE backend qui a répondu — un 204 vide
+  // sans cette empreinte est, par définition, l'œuvre d'un intermédiaire
+  // (antivirus web-shield, proxy, extension du navigateur…), pas de nous.
+  router.use((req, res, next) => {
+    res.set('X-PharmaStock-Code', VERSION_APPLI);
+    next();
+  });
 
   // --- Public ---
   router.get('/health', asyncHandler(async (req, res) => {
@@ -45,8 +57,14 @@ export function apiRoutes() {
   router.use(referenceRoutes());
   router.use(stockRoutes());
   router.use(documentRoutes());
+  // 2.7.35 — hôpital : patients, personnel (TDR) et activité des prescripteurs.
+  router.use(hopitalRoutes());
   router.use(reportRoutes());
   router.use(settingsRoutes());
+
+    router.get('/version', (req, res) => {
+    res.json({ versionAppli: VERSION_APPLI, marqueurs: ['pdf-documents', 'patients-discharged_on'] });
+  });
 
   return router;
 }

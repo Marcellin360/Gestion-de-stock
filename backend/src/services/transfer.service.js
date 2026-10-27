@@ -89,6 +89,7 @@ export async function createTransfer(payload, user, transaction) {
       cible = await Lot.create({
         productId: source.productId, supplierId: source.supplierId, number: source.number, location: to,
         receivedOn: source.receivedOn, manufacturedOn: source.manufacturedOn, expiresOn: source.expiresOn,
+        manufacturer: source.manufacturer,   // 2.7.49 — le fabricant suit le lot
         quantity: 0,
         // 0 : ce lot n'a rien reçu d'un fournisseur. Seules les réceptions comptent
         // dans le CMP (services/pricing.service.js). La valeur du lot transféré est
@@ -145,6 +146,9 @@ export async function transferDetail(id, transaction) {
     const cible = ligne.toLotId ? await Lot.findByPk(ligne.toLotId, { transaction }) : null;
     details.push({
       id: ligne.id, productId: ligne.productId,
+      // 2.7.79 — correction de transfert : le formulaire pré-rempli a besoin
+      // des identifiants des lots source (dépôt) et jumeau (pharmacie).
+      fromLotId: ligne.fromLotId, toLotId: ligne.toLotId,
       product: produit?.name ?? '—', code: produit?.code ?? '—', unit: produit?.unit ?? '',
       lot: source?.number ?? '—', expiresOn: source?.expiresOn ?? null,
       quantity: Number(ligne.quantity), unitCost: money(ligne.unitCost),

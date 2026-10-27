@@ -15,5 +15,7 @@ export default function userRoutes() {
   router.get('/roles', guard, asyncHandler(controller.roles));
   router.post('/', guard, validateBody(userCreateSchema), asyncHandler(controller.create));
   router.put('/:id', guard, validateBody(userUpdateSchema), asyncHandler(controller.update));
+  // 2.7.29 — bouton « Supprimer » de l'administration (garde-fous côté service).
+  router.delete('/:id', guard, asyncHandler(controller.destroy));
   return router;
 }

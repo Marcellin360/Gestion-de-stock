@@ -10,7 +10,15 @@ import { User, Role, Product, Setting, Lot } from '../../src/models/index.js';
 import { createApp } from '../../src/app.js';
 
 let server; let base; let cookie; let csrf;
-const day = offset => new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10);
+// 2.7.29 — « aujourd'hui » vu par les tests = la date métier de la pharmacie
+// (Indian/Antananarivo), pas le jour UTC de la machine : le programme
+// (dates du jour, fenêtres +03:00) raisonne à l'heure locale, sinon les tests
+// lancés après 21 h UTC (minuit à Tana) cherchaient dans le mauvais jour.
+const formateurDateMetier = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Indian/Antananarivo', year: 'numeric', month: '2-digit', day: '2-digit'
+});
+const jourMetier = () => formateurDateMetier.format(new Date());
+const day = offset => new Date(new Date(`${jourMetier()}T00:00:00Z`).getTime() + offset * 86400000).toISOString().slice(0, 10);
 const uuid = () => crypto.randomUUID();
 
 async function call(path, method = 'GET', body) {
@@ -64,7 +72,7 @@ test('2.7.12 — vente boîte + plaquette + comprimé : prix indépendants, stoc
   });
   assert.equal(produit.status, 201, JSON.stringify(produit.body));
 
-  // Réception 10 boîtes à 7 500 Ar (prix de vente boîte = 9 000 Ar avec marge 20 %).
+  // Réception 10 boîtes à 7 500 Ar : CU = 8 250 (PA × 1,10, 2.7.47) ; PV boîte = 9 900 Ar (marge 20 %).
   const reception = await call('/api/receipts', 'POST', {
     requestKey: uuid(), supplierId: fournisseur.body.id, fees: '0', note: '',
     lines: [{ productId: produit.body.id, number: 'lot-1', quantity: 10, purchasePrice: '7500',
@@ -91,15 +99,15 @@ test('2.7.12 — vente boîte + plaquette + comprimé : prix indépendants, stoc
   ];
   const devis = await call('/api/sales/quote', 'POST', { lines: lignes });
   assert.equal(devis.status, 200, JSON.stringify(devis.body));
-  // 9000 + 2×1500 + 5×200 = 13 000 Ar.
-  assert.equal(devis.body.total, '13000.000000', 'les 3 prix indépendants sont appliqués');
+  // 9900 (PV boîte = CMP 8 250 × 1,2, 2.7.47 : CU = PA 7 500 × 1,10) + 2×1500 + 5×200 = 13 900 Ar.
+  assert.equal(devis.body.total, '13900.000000', 'les 3 prix indépendants sont appliqués');
   // Équivalent gestion : 1 + 0,2 + 0,05 = 1,25 boîte.
   const totalGestion = devis.body.lines.reduce((s, l) => s + Number(l.quantity), 0);
   assert.equal(Number(totalGestion).toFixed(6), '1.250000', 'quantités converties en boîtes');
 
   // VENTE validée.
   const vente = await call('/api/sales', 'POST', {
-    requestKey: uuid(), expectedTotal: '13000.000000', note: 'Test 2.7.12', lines: lignes
+    requestKey: uuid(), expectedTotal: '13900.000000', note: 'Test 2.7.12', lines: lignes
   });
   assert.equal(vente.status, 201, JSON.stringify(vente.body));
 

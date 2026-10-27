@@ -24,7 +24,15 @@ let cookie;          // session administrateur
 let csrf;
 let sessionDepot;    // session du gestionnaire du dépôt
 let sessionPharmacie;// session du pharmacien
-const day = offset => new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10);
+// 2.7.29 — « aujourd'hui » vu par les tests = la date métier de la pharmacie
+// (Indian/Antananarivo), pas le jour UTC de la machine : le programme
+// (dates du jour, fenêtres +03:00) raisonne à l'heure locale, sinon les tests
+// lancés après 21 h UTC (minuit à Tana) cherchaient dans le mauvais jour.
+const formateurDateMetier = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Indian/Antananarivo', year: 'numeric', month: '2-digit', day: '2-digit'
+});
+const jourMetier = () => formateurDateMetier.format(new Date());
+const day = offset => new Date(new Date(`${jourMetier()}T00:00:00Z`).getTime() + offset * 86400000).toISOString().slice(0, 10);
 const uuid = () => crypto.randomUUID();
 let product; let supplier; let category;
 let lotA; let lotB;                 // lots du DÉPÔT
@@ -141,7 +149,7 @@ test('médicament : taux de marge hors plage refusé, montant négatif refusé',
   assert.equal((await call('/api/products', 'POST', { ...baseProduit, marginRate: -2 })).status, 422);
 });
 
-test('réception : la marchandise entre au DÉPÔT, coût de revient 9 000 Ar, CMP, prix 10 800 Ar', async () => {
+test('réception : la marchandise entre au DÉPÔT, coût de revient 8 800 Ar (8 000 × 1,10), CMP, prix 10 560 Ar', async () => {
   const receipt = await call('/api/receipts', 'POST', {
     requestKey: uuid(), supplierId: supplier.id, fees: '100000', note: 'Réception initiale',
     lines: [{
@@ -150,7 +158,7 @@ test('réception : la marchandise entre au DÉPÔT, coût de revient 9 000 Ar, C
     }]
   });
   assert.equal(receipt.status, 201);
-  assert.equal(receipt.body.costTotal, '900000.000000');
+  assert.equal(receipt.body.costTotal, '880000.000000');   // 100 × 8 800 (PA 8 000 + frais automatiques 10 %)
   assert.match(receipt.body.reference, /^REC-\d{4}-\d{6}$/);
   assert.equal(receipt.body.location, 'DEPOT', 'toute réception est une entrée au dépôt');
 
@@ -159,12 +167,12 @@ test('réception : la marchandise entre au DÉPÔT, coût de revient 9 000 Ar, C
   assert.ok(lotA, 'le lot doit exister dans le dépôt');
   assert.equal(lotDuMagasin(donnees, 'LOT-A', 'PHARMACY'), undefined,
     'rien ne doit apparaître en pharmacie avant le transfert');
-  assert.equal(lotA.unitCost, '9000.000000');
+  assert.equal(lotA.unitCost, '8800.000000');   // CU = PA 8 000 × 1,10 (frais automatiques, 2.7.47)
   assert.equal(lotA.quantity, 100);
   assert.equal(lotA.receivedQuantity, 100);
   const stored = donnees.products.find(p => p.id === product.id);
-  assert.equal(stored.cmp, '9000.000000');
-  assert.equal(stored.sellingPrice, '10800.000000');
+  assert.equal(stored.cmp, '8800.000000');
+  assert.equal(stored.sellingPrice, '10560.000000');   // PV = CMP 8 800 × 1,20
   assert.ok(donnees.movements.some(m => m.kind === 'RECEIPT' && m.quantity === 100 && m.location === 'DEPOT'));
 });
 
@@ -194,7 +202,7 @@ test('réception : lot expiré refusé, dates incohérentes refusées, date futu
   assert.equal(future.status, 422);
 });
 
-test('deuxième lot au dépôt : CMP recalculé (9 333,33 Ar)', async () => {
+test('deuxième lot au dépôt : CMP recalculé (9 533,33 Ar)', async () => {
   const deuxieme = await call('/api/receipts', 'POST', {
     requestKey: uuid(), supplierId: supplier.id, fees: '0', note: 'Deuxième livraison', lines: [{
       productId: product.id, number: 'LOT-B', quantity: 50, purchasePrice: '10000',
@@ -205,7 +213,7 @@ test('deuxième lot au dépôt : CMP recalculé (9 333,33 Ar)', async () => {
   const donnees = await data();
   lotB = lotDuMagasin(donnees, 'LOT-B', 'DEPOT');
   assert.ok(lotB);
-  assert.equal(donnees.products.find(p => p.id === product.id).cmp, '9333.333333'); // (100×9000 + 50×10000) / 150
+  assert.equal(donnees.products.find(p => p.id === product.id).cmp, '9533.333333'); // (100×8800 + 50×11000) / 150
 });
 
 test('transfert : le dépôt sort, la pharmacie entre, les deux stocks sont séparés', async () => {
@@ -216,7 +224,7 @@ test('transfert : le dépôt sort, la pharmacie entre, les deux stocks sont sép
   }, sessionDepot);
   assert.equal(transfert.status, 201, JSON.stringify(transfert.body));
   assert.match(transfert.body.reference, /^TRF-\d{4}-\d{6}$/);
-  assert.equal(transfert.body.costTotal, '660000.000000');   // 40×9000 + 30×10000
+  assert.equal(transfert.body.costTotal, '682000.000000');   // 40×8800 + 30×11000
 
   const donnees = await data();
   assert.equal(lotDuMagasin(donnees, 'LOT-A', 'DEPOT').quantity, 60);
@@ -227,7 +235,7 @@ test('transfert : le dépôt sort, la pharmacie entre, les deux stocks sont sép
   assert.equal(lotBPharmacie.quantity, 30);
   assert.equal(lotAPharmacie.number, 'LOT-A', 'même numéro de lot : la traçabilité suit');
   assert.equal(lotAPharmacie.expiresOn, lotA.expiresOn, 'même péremption');
-  assert.equal(lotAPharmacie.unitCost, '9000.000000', 'même coût de revient');
+  assert.equal(lotAPharmacie.unitCost, '8800.000000', 'même coût de revient');
   assert.notEqual(lotAPharmacie.id, lotA.id, 'les deux magasins ont des lots distincts');
 
   const mouvements = donnees.movements.filter(m => m.documentType === 'TRANSFER');
@@ -267,25 +275,25 @@ test('vente : FEFO sur le stock de la PHARMACIE, marge, référence VTE', async 
   assert.equal(devis.status, 200);
   assert.equal(devis.body.lines[0].lot, 'LOT-B', 'FEFO : le lot du comptoir qui expire le plus tôt');
   // 2.7.8 : le prix appliqué au comptoir est CELUI DU CATALOGUE, calculé sur le
-  // CMP (9 333,333333 × 1,2 = 11 200) — et non le prix du lot sorti (10 000 × 1,2).
+  // CMP (9 533,333333 × 1,2 = 11 440) — et non le prix du lot sorti (11 000 × 1,2).
   // Le même médicament se vend donc au même prix toute la journée, quel que soit
   // le lot que FEFO a sorti.
-  assert.equal(devis.body.lines[0].unitPrice, '11200.000000');
-  assert.equal(devis.body.lines[0].unitCost, '10000.000000', 'le coût du lot sorti reste celui du lot');
-  assert.equal(devis.body.total, '33600.000000');
+  assert.equal(devis.body.lines[0].unitPrice, '11440.000000');
+  assert.equal(devis.body.lines[0].unitCost, '11000.000000', 'le coût du lot sorti reste celui du lot');
+  assert.equal(devis.body.total, '34320.000000');
 
   const vente = await call('/api/sales', 'POST', {
-    requestKey: uuid(), expectedTotal: '33600.000000', customerName: 'Client test', note: '',
+    requestKey: uuid(), expectedTotal: '34320.000000', customerName: 'Client test', note: '',
     lines: [{ productId: product.id, quantity: 3 }]
   }, sessionPharmacie);
   assert.equal(vente.status, 201);
   assert.match(vente.body.reference, /^VTE-\d{4}-\d{6}$/);
-  assert.equal(vente.body.margin, '3600.000000');   // 3 × (11 200 − 10 000)
+  assert.equal(vente.body.margin, '1320.000000');   // 3 × (11 440 − 11 000)
 
   const donnees = await data();
   assert.equal(lotDuMagasin(donnees, 'LOT-B', 'PHARMACY').quantity, 27);
   assert.equal(lotDuMagasin(donnees, 'LOT-B', 'DEPOT').quantity, 20, 'la vente ne touche pas la réserve');
-  assert.equal(donnees.locations.PHARMACY.stats.salesToday, '33600.000000');
+  assert.equal(donnees.locations.PHARMACY.stats.salesToday, '34320.000000');
   assert.equal(donnees.locations.DEPOT.stats.salesToday, '0.000000', 'le dépôt ne vend pas');
   assert.equal(donnees.locations.DEPOT.stats.stockValue !== undefined, true);
 });
@@ -365,7 +373,7 @@ test('pertes : déclarées magasin par magasin, jamais au coût de vente', async
   });
   assert.equal(pertePharmacie.status, 201);
   assert.equal(pertePharmacie.body.location, 'PHARMACY');
-  assert.equal(pertePharmacie.body.costTotal, '27000.000000');   // 3 × 9 000 Ar
+  assert.equal(pertePharmacie.body.costTotal, '26400.000000');   // 3 × 8 800 Ar
 
   // Le même lot ne peut pas être sorti depuis l'autre magasin.
   assert.equal((await call('/api/losses', 'POST', {
@@ -379,15 +387,15 @@ test('pertes : déclarées magasin par magasin, jamais au coût de vente', async
     lines: [{ lotId: lotA.id, quantity: 2 }]
   }, sessionDepot);
   assert.equal(perteDepot.status, 201);
-  assert.equal(perteDepot.body.costTotal, '18000.000000');
+  assert.equal(perteDepot.body.costTotal, '17600.000000');
 
   const donnees = await data();
   assert.equal(lotDuMagasin(donnees, 'LOT-A', 'PHARMACY').quantity, stockAvantComptoir - 3,
     'la perte sort bien du lot du comptoir');
   assert.equal(lotDuMagasin(donnees, 'LOT-A', 'DEPOT').quantity, stockAvantReserve - 2,
     'la perte de la réserve sort du lot du dépôt');
-  assert.equal(donnees.locations.PHARMACY.stats.lossesToday, '27000.000000');
-  assert.equal(donnees.locations.DEPOT.stats.lossesToday, '18000.000000');
+  assert.equal(donnees.locations.PHARMACY.stats.lossesToday, '26400.000000');
+  assert.equal(donnees.locations.DEPOT.stats.lossesToday, '17600.000000');
   assert.equal(donnees.locations.DEPOT.stats.stockValue !== undefined, true);
 });
 
@@ -493,6 +501,102 @@ test('paramètres : plage de marge contrôlée, valorisation figée après mouve
   assert.equal((await call('/api/settings', 'PUT', { ...settings, valuation: 'CMP' })).status, 409);
   assert.equal((await call('/api/settings', 'PUT', { ...settings, marginMode: 'INCONNU' })).status, 422);
   assert.equal((await call('/api/settings', 'PUT', { ...settings, allowExpiredSale: false })).status, 200);
+
+  // 2.7.47 — les frais d'achat sont un RÉGLAGE admin (Paramètres → « Frais
+  // d'achat ») : la PROCHAINE réception applique le nouveau taux, les lots
+  // déjà reçus ne bougent pas (vu au-dessus : CU = PA × 1,10 aux taux 10 %).
+  // Médicament dédié : le CMP du produit de test principal n'est pas touché.
+  const produitFrais = (await call('/api/products', 'POST', {
+    name: 'Frais Réglage 500 mg', presentation: '', categoryId: null, unit: 'boîte',
+    minStock: 5, maxStock: null, note: '', active: true, marginRate: 20
+  })).body;
+  const avecFrais5 = (await call('/api/settings', 'PUT', { ...settings, feesRate: 5 })).body;
+  assert.equal(Number(avecFrais5.feesRate), 5, 'le taux des frais d’achat est enregistré côté serveur');
+  const recuFrais5 = await call('/api/receipts', 'POST', {
+    requestKey: uuid(), supplierId: supplier.id, note: 'Taux frais à 5 %', lines: [{
+      productId: produitFrais.id, number: 'FRAIS-5', quantity: 10, purchasePrice: '1000',
+      receivedOn: day(0), expiresOn: day(200), manufacturedOn: null
+    }]
+  });
+  assert.equal(recuFrais5.status, 201, 'réception acceptée au taux 5 %');
+  const lotFrais5 = (await data()).lots.find(l => l.number === 'FRAIS-5');
+  assert.equal(lotFrais5.unitCost, '1050.000000', 'CU = PA × (1 + 5/100) : le réglage est bien appliqué');
+  // Retour au taux par défaut pour la suite de la suite de tests.
+  await call('/api/settings', 'PUT', { ...settings, feesRate: 10 });
+
+  // 2.7.48 — la marge est un champ UNIQUE « Taux de marge (%) » (fin de la
+  // plage min/max dans l'interface) : le taux s'applique à TOUS les
+  // médicaments et le prix de vente de chacun est recalculé aussitôt.
+  // CMP actuel du produit test : (100×8800 + 50×11000) / 150 = 9 533,333333.
+  assert.equal((await call('/api/settings', 'PUT', { ...settings, minMargin: 15, maxMargin: 15 })).status, 200);
+  const avec15 = (await data()).products.find(p => p.id === product.id);
+  assert.equal(Number(avec15.marginRate), 15, 'le taux unique est appliqué à tous les médicaments');
+  assert.equal(avec15.sellingPrice, '10964.000000', '2.7.49 : ceil(CMP 9 533,333333 × 1,15) = 10 964 (entier supérieur)');
+  await call('/api/settings', 'PUT', { ...settings, minMargin: 20, maxMargin: 20 });
+  assert.equal((await data()).products.find(p => p.id === product.id).sellingPrice, '11440.000000',
+    'retour à 20 % : PV = CMP 9 533,333333 × 1,20');
+  // La plage redevient large : les tests suivants exercent toujours le
+  // contrôle RG22 (taux de marge hors plage refusé à la création/modification).
+  await call('/api/settings', 'PUT', { ...settings, minMargin: 5, maxMargin: 40 });
+});
+
+// ============================================================================
+// 2.7.49 — FABRIQUANT PAR LOT + ARRONDIS À L'ENTIER SUPÉRIEUR.
+// ① « Fabriquant » (texte) se saisit À LA RÉCEPTION, lot par lot — à la place
+//   du champ date « Fabriqué le » — et il suit le lot partout : ligne de
+//   réception, lot du dépôt, lot jumeau de la pharmacie (transfert), /api/data.
+// ② Coût unitaire = ceil(PA × (1 + taux frais)) ; Prix de vente = ceil(CMP ×
+//   (1 + marge)) : la comptabilité de l'officine raisonne en Ariary entier.
+// ============================================================================
+test('2.7.49 — fabricant saisi à la réception, suivi du lot ; coûts et prix entiers (ceil)', async () => {
+  // Produit dédié (isole le CMP du produit principal).
+  const produitFab = (await call('/api/products', 'POST', {
+    name: 'Fabricant Test 200 mg', presentation: '', categoryId: null, unit: 'boîte',
+    minStock: 5, maxStock: null, note: '', active: true, marginRate: 20
+  })).body;
+
+  // ① Fabricant sur la ligne de réception (lot FAB-A).
+  const recFab = await call('/api/receipts', 'POST', {
+    requestKey: uuid(), supplierId: supplier.id, note: 'Fabricant suivi', lines: [{
+      productId: produitFab.id, number: 'FAB-A', quantity: 10, purchasePrice: '2000',
+      receivedOn: day(0), expiresOn: day(200), manufacturer: 'Sanofi France'
+    }]
+  });
+  assert.equal(recFab.status, 201, 'la réception accepte le champ fabricant');
+  const lotFabA = (await data()).lots.find(l => l.number === 'FAB-A');
+  assert.equal(lotFabA.manufacturer, 'Sanofi France', 'le fabricant est rangé sur le lot');
+  const docRecu = (await data()).documents.find(d => d.id === recFab.body.id);
+  assert.equal(docRecu.lines[0].manufacturer, 'Sanofi France', 'la liste / détail des réceptions expose le fabricant');
+
+  // Suivi au transfert : le lot jumeau de la pharmacie garde le même fabricant.
+  const transFab = await call('/api/transfers', 'POST', {
+    requestKey: uuid(), reason: 'Réassort du comptoir', note: 'Fabricant suit le lot',
+    lines: [{ lotId: lotFabA.id, quantity: 4 }]
+  }, sessionDepot);
+  assert.equal(transFab.status, 201, JSON.stringify(transFab.body));
+  const jumeauFab = (await data()).lots.find(l => l.number === 'FAB-A' && l.location === 'PHARMACY');
+  assert.equal(jumeauFab.manufacturer, 'Sanofi France', 'le lot jumeau (pharmacie) garde le fabricant');
+
+  // ② Entier supérieur : PA 999 × 1,10 = 1 098,90 → CU plafonné à 1 099 (lot FAB-B).
+  const recPlafond = await call('/api/receipts', 'POST', {
+    requestKey: uuid(), supplierId: supplier.id, note: 'Arrondi supérieur', lines: [{
+      productId: produitFab.id, number: 'FAB-B', quantity: 5, purchasePrice: '999',
+      receivedOn: day(0), expiresOn: day(200), manufacturer: 'Cipla'
+    }]
+  });
+  assert.equal(recPlafond.status, 201);
+  const lotFabB = (await data()).lots.find(l => l.number === 'FAB-B');
+  assert.equal(lotFabB.unitCost, '1099.000000', 'CU = ceil(999 × 1,10) = 1 099 (entier supérieur)');
+  // CMP = (10×2000?… non : CU du lot A) → (10 × 2 200 + 5 × 1 099) / 15 :
+  //   lot A : CU = ceil(2 000 × 1,10) = 2 200 ; lot B : 1 099.
+  //   CMP = (10×2200 + 5×1099) / 15 = 27 495 / 15 = 1 833.
+  const ficheFab = (await data()).products.find(p => p.id === produitFab.id);
+  assert.equal(ficheFab.cmp, '1833.000000', 'CMP = (10×2 200 + 5×1 099) / 15');
+  // PV = ceil(1 833 × 1,20) = 2 200 (exact). Il faut une marge qui fractionne :
+  await call(`/api/products/${produitFab.id}/margin`, 'PUT', { marginRate: 15, reason: 'Contrôle arrondi supérieur' });
+  const fichePlafond = (await data()).products.find(p => p.id === produitFab.id);
+  assert.equal(fichePlafond.sellingPrice, '2108.000000', 'PV = ceil(1 833 × 1,15) = ceil(2 107,95) = 2 108');
+  await call(`/api/products/${produitFab.id}/margin`, 'PUT', { marginRate: 20, reason: 'Retour au taux de référence' });
 });
 
 test('traçabilité des prix : historique consultable après modification du taux (RG23, RG24)', async () => {
@@ -757,9 +861,13 @@ test('profil dépôt : réserve seulement — ni ventes ni chiffre d’affaires 
   assert.equal(donneesDepot.stats.salesToday, '0.000000');
   assert.ok(donneesDepot.stats.stockValue !== undefined, 'le dépôt connaît la valeur de son stock');
 
-  // Et les ventes en cours ne sont pas dans ses alertes.
-  assert.ok(!donneesDepot.alerts.some(a => String(a.id).includes('PHARMACY')));
-  // Le tableau de bord du dépôt ne reçoit aucun bloc « pharmacie ».
+  // 2.7.28 — le dépôt REÇOIT désormais les alertes « bientôt épuisé / rupture »
+  // de la PHARMACIE (pour réassortir à temps), mais RIEN d'autre du comptoir :
+  // ni péremptions, ni surstock, ni lots bloqués de la pharmacie.
+  const alertesPharmacieChezDepot = donneesDepot.alerts.filter(a => a.location === 'PHARMACY');
+  assert.ok(alertesPharmacieChezDepot.every(a => ['RUPTURE', 'RUPTURE_VENDABLE', 'STOCK_FAIBLE'].includes(a.type)),
+    'seules les alertes de stock (faible/rupture) du comptoir arrivent au dépôt');
+  // Le tableau de bord du dépôt ne reçoit aucun bloc « pharmacie » (stats cachées).
   assert.ok(donneesDepot.locations.DEPOT && !donneesDepot.locations.PHARMACY,
     'la vue dépôt ne contient que le magasin dépôt');
 });
@@ -775,6 +883,128 @@ test('recherche de lots : chaque magasin retrouve les siens, la pharmacie les de
   // Le dépôt, lui, ne voit que le dépôt même s'il demande l'autre magasin.
   const depotVuParDepot = (await call('/api/lots?location=PHARMACY', 'GET', undefined, sessionDepot)).body;
   assert.ok(depotVuParDepot.every(l => l.location === 'DEPOT'));
+});
+
+test('alertes « bientôt épuisé » routées par profil (2.7.28) : comptoir → dépôt + pharmacie, réserve → dépôt + admin', async () => {
+  // Scénario : un médicament avec seuil minimum 10 ; le DÉPÔT en reçoit 20,
+  // puis 16 partent à la pharmacie → réserve 4 (≤ 10 : FAIBLE AU DÉPÔT) et
+  // comptoir 16 (OK) ; ensuite le comptoir en vend 12 → comptoir 4 (≤ 10 :
+  // FAIBLE À LA PHARMACIE). Les alertes doivent alors aller chacune à qui elle
+  // concerne, SANS être diluées dans le stock de l'autre magasin.
+  const creation = await call('/api/products', 'POST', {
+    name: 'Alerte Test 250 mg', presentation: 'Boîte de 10', categoryId: category.id,
+    unit: 'boîte', minStock: 10, maxStock: null, note: '', active: true, marginRate: 20
+  });
+  assert.equal(creation.status, 201, JSON.stringify(creation.body));
+  const alerte = creation.body;
+  assert.ok(alerte.id);
+
+  // Réception au dépôt (quantité 20 > 10 : rien d'anormal pour l'instant).
+  await call('/api/receipts', 'POST', {
+    requestKey: uuid(), supplierId: supplier.id, fees: '0', note: 'Stock alerte',
+    lines: [{ productId: alerte.id, number: 'LOT-ALERTE', quantity: 20, purchasePrice: '5000', receivedOn: day(0), expiresOn: day(400), manufacturedOn: null }]
+  }, sessionDepot);
+
+  let donneesAdmin = await data();
+  const lotAlerteDepot = lotDuMagasin(donneesAdmin, 'LOT-ALERTE', 'DEPOT');
+  assert.equal(lotAlerteDepot.quantity, 20);
+
+  // 16 unités passent au comptoir : la réserve tombe à 4 ≤ seuil 10.
+  await call('/api/transfers', 'POST', {
+    requestKey: uuid(), fromLocation: 'DEPOT', toLocation: 'PHARMACY',
+    reason: 'Réassort comptoir', note: '', lines: [{ lotId: lotAlerteDepot.id, quantity: 16 }]
+  }, sessionDepot);
+
+  // Le comptoir en vend 12 : stock 16 − 12 = 4 ≤ seuil 10 → FAIBLE À LA PHARMACIE.
+  const lotAlertePharmacie = lotDuMagasin(await data(), 'LOT-ALERTE', 'PHARMACY');
+  const vente = await call('/api/sales', 'POST', {
+    requestKey: uuid(),
+    lines: [{ productId: alerte.id, quantity: 12 }]
+  }, sessionPharmacie);
+  assert.equal(vente.status, 201, JSON.stringify(vente.body));
+
+  // ── ADMIN : les DEUX magasins sont signalés, chacun avec son lieu. ────────
+  donneesAdmin = await data();
+  const signaleesAdmin = nom => donneesAdmin.alerts.filter(x => x.name === nom && x.type === 'STOCK_FAIBLE');
+  assert.ok(signaleesAdmin(alerte.name).some(x => x.location === 'DEPOT'),
+    'admin alerté du stock faible de la réserve');
+  assert.ok(signaleesAdmin(alerte.name).some(x => x.location === 'PHARMACY'),
+    'admin alerté du stock faible du comptoir');
+
+  // ── PHARMACIE : l'alerte du comptoir LUI arrive, sans la masquer. ─────────
+  const donneesPharmacie = (await call('/api/data', 'GET', undefined, sessionPharmacie)).body;
+  const alerteChezPharmacie = donneesPharmacie.alerts.find(x => x.name === alerte.name && x.type === 'STOCK_FAIBLE');
+  assert.ok(alerteChezPharmacie, 'le pharmacien est alerté que SON stock approche de l’épuisement');
+  assert.equal(alerteChezPharmacie.location, 'PHARMACY', 'l’alerte concerne bien le comptoir');
+  assert.ok(!donneesPharmacie.alerts.some(x => x.location === 'DEPOT' && x.name === alerte.name),
+    'le pharmacien ne reçoit pas l’alerte de la réserve');
+
+  // ── DÉPÔT : il reçoit SA réserve ET le « bientôt épuisé » du comptoir. ────
+  const donneesDepot = (await call('/api/data', 'GET', undefined, sessionDepot)).body;
+  assert.ok(donneesDepot.alerts.some(x => x.name === alerte.name && x.type === 'STOCK_FAIBLE' && x.location === 'DEPOT'),
+    'le dépôt est alerté de SA propre réserve trop basse');
+  assert.ok(donneesDepot.alerts.some(x => x.name === alerte.name && x.type === 'STOCK_FAIBLE' && x.location === 'PHARMACY'),
+    '2.7.28 : le dépôt est AUSSI alerté du comptoir presque épuisé — réassort à temps');
+});
+
+test('2.7.31 — unité de gestion choisie à la réception ; listes portent leur contenu', async () => {
+  // L'« Unité de gestion » quitte la fiche : elle se choisit à la réception
+  // (boîte/flacon/pièce/plaquette) et le serveur la REPORTE sur le médicament.
+  const reception = await call('/api/receipts', 'POST', {
+    requestKey: uuid(), supplierId: supplier.id, fees: '0', note: '',
+    lines: [{ productId: product.id, number: 'LOT-UNITE', quantity: 12, purchasePrice: '1000',
+      receivedOn: day(0), expiresOn: day(200), manufacturedOn: null, unit: 'flacon' }]
+  });
+  assert.equal(reception.status, 201, JSON.stringify(reception.body));
+  const donnees = await data();
+  assert.equal(donnees.products.find(p => p.id === product.id).unit, 'flacon',
+    'l’unité choisie à la réception est reportée sur la fiche du médicament');
+
+  // Les listes Réceptions/Transferts emportent leur contenu (médicament,
+  // quantité, coût unitaire) directement dans /api/data — pas de requête par bon.
+  const recu = donnees.documents.find(d => d.kind === 'RECEIPT'
+    && (d.lines || []).some(l => l.productId === product.id && l.quantity === 12));
+  assert.ok(recu, 'la réception porte ses lignes synthétiques');
+  assert.equal(recu.lines[0].unitCost, '1100.000000', 'coût unitaire par ligne (PA × 1,10)');
+  const transfert = donnees.documents.find(d => d.kind === 'TRANSFER' && d.lines?.length);
+  assert.ok(transfert, 'le transfert porte ses lignes synthétiques');
+  assert.ok(transfert.lines[0].productId > 0 && transfert.lines[0].quantity > 0);
+});
+
+test('2.7.29 — suppression d’un compte : gardes, effet réel, historique protégé', async () => {
+  // Un compte tout neuf, jamais utilisé : la suppression passe.
+  const roles = (await call('/api/users/roles')).body;
+  const roleDepot = roles.find(r => r.code === 'DEPOT');
+  const creation = await call('/api/users', 'POST', {
+    name: 'Compte À Supprimer', login: 'a.supprimer', roleId: roleDepot.id,
+    active: true, phone: '', note: '', password: 'TmpSuppr1!'
+  });
+  assert.equal(creation.status, 201, JSON.stringify(creation.body));
+
+  const suppression = await call(`/api/users/${creation.body.id}`, 'DELETE');
+  assert.equal(suppression.status, 200, JSON.stringify(suppression.body));
+  assert.equal(suppression.body.deleted, true);
+
+  // Le compte n'existe plus : ni dans la liste, ni pour ouvrir une session.
+  const liste = (await call('/api/users')).body;
+  assert.ok(!liste.some(u => u.login === 'a.supprimer'), 'le compte n’apparaît plus dans la liste');
+  assert.equal((await call('/api/auth/login', 'POST', { login: 'a.supprimer', password: 'TmpSuppr1!' })).status, 401,
+    'connexion désormais impossible');
+
+  // Verrou 1 : un compte ne peut pas se supprimer LUI-MÊME.
+  const moi = (await call('/api/auth/me')).body;
+  const autoRefus = await call(`/api/users/${moi.user.id}`, 'DELETE');
+  assert.equal(autoRefus.status, 422, 'auto-suppression refusée');
+  assert.match(autoRefus.body.error, /propre compte/);
+
+  // Verrou 2 : compte ayant TRACÉ des opérations (le dépôt de test a reçu et
+  // transféré) → suppression refusée, désactivation proposée à la place.
+  const sessionDepotUser = (await call('/api/auth/login', 'POST', { login: 'depot-test', password: 'MotDePasse-Test-2026' })).body;
+  const refuseHistorique = await call(`/api/users/${sessionDepotUser.user.id}`, 'DELETE');
+  assert.equal(refuseHistorique.status, 409, 'un compte avec historique n’est pas supprimable');
+  assert.match(refuseHistorique.body.error, /Désactivez-le à la place/, 'la phrase guide vers la désactivation');
+  // L'utilisateur ciblé vit toujours, ses sessions ne sont pas touchées inutilement.
+  assert.ok((await call('/api/users')).body.some(u => u.login === 'depot-test'));
 });
 
 test('journal d’audit : actions tracées, aucun secret enregistré', async () => {
@@ -932,12 +1162,12 @@ test('2.7.8 : recevoir le même médicament au même numéro de lot à un autre 
     return reponse.body;
   });
 
-  // 1re livraison : 100 boîtes à 1 000 Ar → CMP 1 000, prix 1 200.
+  // 1re livraison : 100 boîtes à 1 000 Ar → CU 1 100 (frais automatiques 10 %, 2.7.47), CMP 1 100, prix 1 320.
   const premiere = await livrer(`${produit.code}-2026`, 100, '1000');
   assert.deepEqual(premiere.ajustements, [], 'première livraison : aucun ajustement');
   let fiche = (await data()).products.find(p => p.id === produit.id);
-  assert.equal(fiche.cmp, '1000.000000');
-  assert.equal(fiche.sellingPrice, '1200.000000');
+  assert.equal(fiche.cmp, '1100.000000');
+  assert.equal(fiche.sellingPrice, '1320.000000');
 
   // 2e livraison : MÊME numéro de lot (celui proposé par l'écran), prix du jour.
   // Elle doit passer : un lot distinct est créé, jamais un refus.
@@ -953,8 +1183,8 @@ test('2.7.8 : recevoir le même médicament au même numéro de lot à un autre 
 
   // CMP = moyenne des 180 unités, et prix recalculé sur cette moyenne.
   fiche = donnees.products.find(p => p.id === produit.id);
-  assert.equal(fiche.cmp, '1444.444444');            // (100×1000 + 80×2000) / 180
-  assert.equal(fiche.sellingPrice, '1733.333333');   // 1 444,444444 × 1,2
+  assert.equal(fiche.cmp, '1588.888889');            // (100×1100 + 80×2200) / 180
+  assert.equal(fiche.sellingPrice, '1907.000000');   // 2.7.49 : ceil(1 588,888889 × 1,2) = 1 907
 
   // 3e livraison : même numéro ET même prix que la première → le lot est complété
   // (quantités additionnées) sans écraser le coût de revient.
@@ -963,8 +1193,8 @@ test('2.7.8 : recevoir le même médicament au même numéro de lot à un autre 
   const premierLot = apres.lots.find(l => l.number === `${produit.code}-2026`);
   assert.equal(Number(premierLot.receivedQuantity), 120);
   assert.equal(Number(premierLot.quantity), 120);
-  assert.equal(premierLot.unitCost, '1000.000000', 'compléter un lot ne divise pas son coût');
-  assert.equal(apres.products.find(p => p.id === produit.id).cmp, '1400.000000'); // (120×1000 + 80×2000) / 200
+  assert.equal(premierLot.unitCost, '1100.000000', 'compléter un lot ne divise pas son coût');
+  assert.equal(apres.products.find(p => p.id === produit.id).cmp, '1540.000000'); // (120×1100 + 80×2200) / 200
 });
 
 test('2.7.8 : un transfert ne modifie pas le CMP ni le prix de vente', async () => {
@@ -979,8 +1209,8 @@ test('2.7.8 : un transfert ne modifie pas le CMP ni le prix de vente', async () 
     });
   }
   const avant = (await data()).products.find(p => p.id === produit.id);
-  assert.equal(avant.cmp, '1400.000000');            // (60×1000 + 40×2000) / 100
-  assert.equal(avant.sellingPrice, '1680.000000');
+  assert.equal(avant.cmp, '1540.000000');            // (60×1100 + 40×2200) / 100
+  assert.equal(avant.sellingPrice, '1848.000000');
 
   const lotDepot = (await data()).lots.find(l => l.productId === produit.id && l.number === 'LOT-A');
   await call('/api/transfers', 'POST', {
@@ -989,8 +1219,8 @@ test('2.7.8 : un transfert ne modifie pas le CMP ni le prix de vente', async () 
 
   const apres = await data();
   const fiche = apres.products.find(p => p.id === produit.id);
-  assert.equal(fiche.cmp, '1400.000000', 'un transfert n’est pas une entrée fournisseur : le CMP ne bouge pas');
-  assert.equal(fiche.sellingPrice, '1680.000000');
+  assert.equal(fiche.cmp, '1540.000000', 'un transfert n’est pas une entrée fournisseur : le CMP ne bouge pas');
+  assert.equal(fiche.sellingPrice, '1848.000000');
   const enPharmacie = apres.lots.find(l => l.productId === produit.id && l.location === 'PHARMACY');
   assert.equal(Number(enPharmacie.quantity), 25);
   assert.equal(Number(enPharmacie.receivedQuantity), 0, 'le lot du comptoir n’a rien reçu d’un fournisseur');
@@ -1010,11 +1240,403 @@ test('2.7.8 : le réglage « prix de vente calculé sur » s’applique immédia
   const reglages = (await data()).settings;
   const prixDe = async () => (await data()).products.find(p => p.id === produit.id).sellingPrice;
 
-  assert.equal(await prixDe(), '2400.000000', 'CMP 2 000 × 1,2 par défaut');
+  assert.equal(await prixDe(), '2640.000000', 'CMP 2 200 × 1,2 par défaut');
   await call('/api/settings', 'PUT', { ...reglages, pricingBasis: 'LOT' });
-  assert.equal(await prixDe(), '3600.000000', 'mode « dernier lot » : 3 000 × 1,2 (appliqué tout de suite)');
+  assert.equal(await prixDe(), '3960.000000', 'mode « dernier lot » : 3 300 × 1,2 (appliqué tout de suite)');
   await call('/api/settings', 'PUT', { ...reglages, pricingBasis: 'CMP' });
-  assert.equal(await prixDe(), '2400.000000', 'retour au CMP');
+  assert.equal(await prixDe(), '2640.000000', 'retour au CMP');
+});
+
+test('2.7.33 — fiche de stock produit (solde cumulé), dashboard mensuel, ticket A5 ×2', async () => {
+  // Chaîne complète sur UN médicament dédié : 2 réceptions au dépôt (60 + 40),
+  // 1 transfert de 25 vers le comptoir, 1 vente de 3 boîtes.
+  const produit = (await call('/api/products', 'POST', {
+    name: 'Fiche Produit Coquilette 250 g', presentation: '', categoryId: null, unit: 'boîte',
+    minStock: 5, maxStock: null, note: '', active: true, marginRate: 20
+  })).body;
+  for (const [numero, quantite, prix] of [['FP-A', 60, '1000'], ['FP-B', 40, '1000']]) {
+    await call('/api/receipts', 'POST', {
+      requestKey: uuid(), supplierId: supplier.id, fees: '0', note: '',
+      lines: [{ productId: produit.id, number: numero, quantity: quantite, purchasePrice: prix, receivedOn: day(0), expiresOn: day(200), manufacturedOn: null }]
+    });
+  }
+  let donnees = await data();
+  const lotDepot = donnees.lots.find(l => l.productId === produit.id && l.location === 'DEPOT' && l.number === 'FP-A');
+  await call('/api/transfers', 'POST', {
+    requestKey: uuid(), reason: 'Réassort', note: '', lines: [{ lotId: lotDepot.id, quantity: 25 }]
+  });
+
+  // Vente de 3 boîtes au comptoir (pharmacien, comme au réel).
+  const devis = await call('/api/sales/quote', 'POST', { note: '', lines: [{ productId: produit.id, quantity: 3 }] });
+  const vente = await call('/api/sales', 'POST', {
+    requestKey: uuid(), expectedTotal: devis.body.total, customerName: '', note: '',
+    lines: [{ productId: produit.id, quantity: 3 }]
+  }, sessionPharmacie);
+  assert.equal(vente.status, 201);
+
+  // TEBOKA ⑪ — fiche de stock DU produit, magasin par magasin, solde cumulé.
+  const depuis = day(-30); const jusqu = day(1);
+  const ficheDepot = await call(`/api/reports?type=fiche_produit&productId=${produit.id}&from=${depuis}&to=${jusqu}&location=DEPOT`);
+  assert.equal(ficheDepot.status, 200, 'fiche produit du dépôt accessible');
+  assert.ok(ficheDepot.body.rows.length >= 3, '2 réceptions + 1 transfert = 3 mouvements au dépôt');
+  const lignesDepot = ficheDepot.body.rows;
+  assert.equal(Number(lignesDepot[0]['Entrées']), 60, 'chronologique : la 1ʳᵉ réception d’abord');
+  assert.equal(Number(lignesDepot[0]['Solde']), 60, 'le solde part du stock antérieur (0)');
+  assert.equal(Number(lignesDepot[lignesDepot.length - 1]['Solde']), 75, '60 + 40 − 25 restent au dépôt');
+  const fichePharmacie = await call(`/api/reports?type=fiche_produit&productId=${produit.id}&from=${depuis}&to=${jusqu}&location=PHARMACY`);
+  assert.equal(fichePharmacie.status, 200);
+  const lignesPharmacie = fichePharmacie.body.rows;
+  assert.equal(Number(lignesPharmacie[lignesPharmacie.length - 1]['Solde']), 22, '25 − 3 restent au comptoir');
+  const sansProduit = await call(`/api/reports?type=fiche_produit&from=${depuis}&to=${jusqu}`);
+  assert.equal(sansProduit.status, 422, 'une fiche individuelle exige productId');
+
+  // TEBOKA ⑮ — le tableau de bord mensuel accompagne /api/data.
+  donnees = await data();
+  assert.ok(donnees.month, 'les chiffres du mois sont joints aux données du poste');
+  assert.equal(donnees.month.month, day(0).slice(0, 7), 'le mois courant à l’heure de la pharmacie');
+  assert.ok(donnees.month.salesMonthCount >= 1, 'la vente du jour compte dans le mois');
+  assert.ok(Number(donnees.month.salesMonth) >= Number(devis.body.total), 'le chiffre du mois couvre la vente');
+
+  // TEBOKA ⑬ — le ticket : A5 portrait, deux exemplaires, sans Lot/Expiration.
+  const impression = await fetch(`${base}/api/documents/SALE/${vente.body.id}/print`, { headers: { Cookie: cookie } });
+  const texte = await impression.text();
+  assert.ok(texte.includes('size: A5 portrait'), 'format A5 portrait');
+  assert.ok(texte.includes('Exemplaire client') && texte.includes('Copie pharmacie — à conserver'),
+    'deux exemplaires sur la feuille (client + copie pharmacie)');
+  assert.ok(!texte.includes('<th>Lot</th>') && !texte.includes('Expiration'),
+    'les colonnes Lot / Expiration ne sont plus sur le ticket');
+  assert.ok(!texte.includes('FP-A') && !texte.includes('FP-B'), 'aucun numéro de lot sur le ticket');
+});
+
+test('2.7.34 — correction de réception (dépôt propose → admin tranche), inventaire : rappel mensuel', async () => {
+  // ── Réception de départ, faite par le DÉPÔT : lot COR-A, 100 boîtes à 500 Ar.
+  const produit = (await call('/api/products', 'POST', {
+    name: 'Correction Quinine 300 mg', presentation: '', categoryId: null, unit: 'boîte',
+    minStock: 5, maxStock: null, note: '', active: true, marginRate: 20
+  })).body;
+  const reception = await call('/api/receipts', 'POST', {
+    requestKey: uuid(), supplierId: supplier.id, fees: '0', note: '',
+    lines: [{ productId: produit.id, number: 'COR-A', quantity: 100, purchasePrice: '500', receivedOn: day(0), expiresOn: day(200), manufacturedOn: null }]
+  }, sessionDepot);
+  assert.equal(reception.status, 201);
+  assert.equal(reception.body.costTotal, '55000.000000');   // 100 × 550 (PA 500 × 1,10)
+
+  // Motif trop court : refusé dès le formulaire (422 du validateur).
+  const motifCourt = await call(`/api/receipts/${reception.body.id}/corrections`, 'POST', {
+    reason: 'no', supplierId: supplier.id, fees: '0', note: '',
+    lines: [{ productId: produit.id, number: 'COR-A', quantity: 90, purchasePrice: '550', receivedOn: day(0), expiresOn: day(200), manufacturedOn: null }]
+  }, sessionDepot);
+  assert.equal(motifCourt.status, 422, 'un motif sérieux est exigé');
+
+  // ── Le dépôt PROPOSE sa correction (quantité 90, prix 550, méme lot, mêmes dates).
+  const proposition = await call(`/api/receipts/${reception.body.id}/corrections`, 'POST', {
+    reason: 'Bon de livraison rectifié par le fournisseur : 90 boîtes à 550 Ar.',
+    supplierId: supplier.id, fees: '0', note: '',
+    lines: [{ productId: produit.id, number: 'COR-A', quantity: 90, purchasePrice: '550', receivedOn: day(0), expiresOn: day(200), manufacturedOn: null }]
+  }, sessionDepot);
+  assert.equal(proposition.status, 201);
+  assert.equal(proposition.body.status, 'PENDING');
+  assert.match(proposition.body.reference, /^COR-\d{4}-\d{6}$/);
+
+  // Rien n'a changé tant que l'administrateur n'a pas tranché.
+  let donnees = await data();
+  assert.equal(donnees.lots.find(l => l.number === 'COR-A').quantity, 100, 'la réception est INCHANGÉE avant décision');
+
+  // Une seule demande en attente par réception.
+  const doublon = await call(`/api/receipts/${reception.body.id}/corrections`, 'POST', {
+    reason: 'Tentative pendant la première', supplierId: supplier.id, fees: '0', note: '',
+    lines: [{ productId: produit.id, number: 'COR-A', quantity: 80, purchasePrice: '600', receivedOn: day(0), expiresOn: day(200), manufacturedOn: null }]
+  }, sessionDepot);
+  assert.equal(doublon.status, 422, 'une seule correction en attente par réception');
+
+  // La décision n'appartient pas au dépôt (permission « settings »).
+  const trancherParDepot = await call(`/api/receipt-corrections/${proposition.body.id}/validate`, 'POST', { note: '' }, sessionDepot);
+  assert.equal(trancherParDepot.status, 403, 'seul l’administrateur tranche');
+
+  // Refus SANS explication : rejeté, la demande reste en attente.
+  const refusSansMotif = await call(`/api/receipt-corrections/${proposition.body.id}/refuse`, 'POST', { note: 'ok' });
+  assert.equal(refusSansMotif.status, 422, 'un refus s’explique au dépôt');
+
+  // L'administrateur REFUSE motivé : réception toujours inchangée, nouvelle demande possible.
+  const refus = await call(`/api/receipt-corrections/${proposition.body.id}/refuse`, 'POST', { note: 'Les quantités du bon original sont justes : refusé.' });
+  assert.equal(refus.status, 200);
+  assert.equal(refus.body.status, 'REFUSED');
+  donnees = await data();
+  assert.equal(donnees.lots.find(l => l.number === 'COR-A').quantity, 100, 'refus = réception conservée telle quelle');
+
+  // Proposée à nouveau, validée cette fois.
+  const proposition2 = await call(`/api/receipts/${reception.body.id}/corrections`, 'POST', {
+    reason: 'Le fournisseur confirme écrit : 90 boîtes à 550 Ar.', supplierId: supplier.id, fees: '0', note: '',
+    lines: [{ productId: produit.id, number: 'COR-A', quantity: 90, purchasePrice: '550', receivedOn: day(0), expiresOn: day(200), manufacturedOn: null }]
+  }, sessionDepot);
+  assert.equal(proposition2.status, 201, 'une correction refusée peut être re-proposée');
+  const decision = await call(`/api/receipt-corrections/${proposition2.body.id}/validate`, 'POST', { note: 'Vérifié sur le bon.' });
+  assert.equal(decision.status, 200);
+  assert.equal(decision.body.status, 'VALIDATED');
+
+  // Nouvelle réalité : quantité, prix, coût total, mouvements, CMP recalculés —
+  // et l'ancienne version reste TRACÉE (RG19 : jamais de suppression).
+  donnees = await data();
+  const lotsCorA = donnees.lots.filter(l => l.number.startsWith('COR-A'));
+  const lotCorrige = lotsCorA.find(l => Number(l.quantity) === 90);
+  assert.ok(lotCorrige, 'un lot COR-A porte maintenant les 90 boîtes corrigées');
+  assert.equal(lotCorrige.unitCost, '605.000000', 'le lot corrigé porte le nouveau prix (550 × 1,10)');
+  assert.equal(Number(lotCorrige.receivedQuantity), 90);
+  assert.ok(lotsCorA.some(l => Number(l.quantity) === 0),
+    'l’ancienne version du lot reste à zéro dans l’historique (comme après une annulation)');
+  const receiptDoc = donnees.documents.find(docu => docu.kind === 'RECEIPT' && docu.id === reception.body.id);
+  assert.equal(receiptDoc.costTotal, '54450.000000', 'coût total recalculé (90 × 605) — absent de toute écriture manuelle');
+  const mouvements = donnees.movements.filter(m => m.documentType === 'RECEIPT' && m.documentId === reception.body.id);
+  const solde = mouvements.reduce((total, m) => total + Number(m.quantity), 0);
+  assert.equal(solde, 90, 'solde des entrées de la réception = 90 (+100 initial, −100 correction tracée, +90 corrigé)');
+  assert.ok(mouvements.some(m => Number(m.quantity) === -100), 'contre-mouvement de correction tracé (RG19)');
+  assert.equal(donnees.products.find(p => p.id === produit.id).cmp, '605.000000',
+    'CMP recalculé sur le lot corrigé');
+
+  // ── Garde-fou : une fois un lot entamé (transfert), la correction est refusée.
+  await call('/api/transfers', 'POST', {
+    requestKey: uuid(), reason: 'Réassort', note: '', lines: [{ lotId: lotCorrige.id, quantity: 10 }]
+  });
+  const tropTard = await call(`/api/receipts/${reception.body.id}/corrections`, 'POST', {
+    reason: 'Encore un ajustement', supplierId: supplier.id, fees: '0', note: '',
+    lines: [{ productId: produit.id, number: 'COR-A', quantity: 85, purchasePrice: '550', receivedOn: day(0), expiresOn: day(200), manufacturedOn: null }]
+  }, sessionDepot);
+  assert.equal(tropTard.status, 422, 'correction refusée : un lot de la réception a déjà bougé');
+  assert.match(tropTard.body.error, /déjà bougé|annulation tracée/);
+
+  // ── Teboka ⑦ : le rappel mensuel d’inventaire reflète fidèlement la réalité
+  //    (présent tant qu’aucun inventaire DÉPÔT n’a été validé ce mois-ci).
+  const moisCourant = donnees.date.slice(0, 7);
+  const depotInventaireCeMois = donnees.inventories.filter(inv => inv.location === 'DEPOT'
+    && inv.status === 'VALIDATED' && inv.validatedAt
+    && new Date(new Date(inv.validatedAt).getTime() + 3 * 3600 * 1000).toISOString().slice(0, 7) === moisCourant);
+  donnees = await data();
+  const rappels = donnees.alerts.filter(alerte => alerte.type === 'INVENTAIRE_MENSUEL');
+  assert.equal(rappels.length, depotInventaireCeMois.length ? 0 : 1,
+    'le rappel mensuel (dépôt + admin) disparaît dès l’inventaire validé du mois');
+});
+
+test('2.7.35 — hôpital : carnet (patient + prescripteur), ordonnance sans montants, TDR et activité', async () => {
+  // ── Référentiels : patients et personnel soignant, ouverts au comptoir.
+  const patient = await call('/api/patients', 'POST', {
+    name: 'Rasoamanana Laza', service: 'Maternité B', note: 'Lit 12'
+  }, sessionPharmacie);
+  assert.equal(patient.status, 201, 'le pharmacien enregistre le patient du carnet');
+  assert.equal(patient.body.active, true);
+
+  const doublonPatient = await call('/api/patients', 'POST', {
+    name: 'Rasoamanana Laza', service: 'Maternité B', note: ''
+  }, sessionPharmacie);
+  assert.equal(doublonPatient.status, 409, 'même patient + même service = doublon refusé');
+
+  const staff = await call('/api/staff', 'POST', {
+    name: 'Dr Rasoa Kanto', role: 'DOCTOR', dutyStartOn: day(0), dutyEndOn: day(6), phone: '034 12 345'
+  }, sessionPharmacie);
+  assert.equal(staff.status, 201);
+  assert.equal(staff.body.dutyStartOn, day(0), 'date de DÉBUT de garde enregistrée');
+  assert.equal(staff.body.dutyEndOn, day(6), 'date de FIN de garde enregistrée');
+
+  const doublonStaff = await call('/api/staff', 'POST', {
+    name: 'Dr Rasoa Kanto', role: 'MIDWIFE', dutyStartOn: day(0), dutyEndOn: day(0), phone: ''
+  }, sessionPharmacie);
+  assert.equal(doublonStaff.status, 409, 'un nom de prescripteur est unique');
+
+  // 2.7.38 — les dates de garde sont OBLIGATOIRES, et la fin ≥ le début.
+  const sansDates = await call('/api/staff', 'POST', {
+    name: 'Nurse Beta', role: 'MIDWIFE', phone: ''
+  }, sessionPharmacie);
+  assert.equal(sansDates.status, 422, 'sans dates de garde, la fiche est refusée');
+  const finAvantDebut = await call('/api/staff', 'POST', {
+    name: 'Nurse Beta', role: 'MIDWIFE', dutyStartOn: day(5), dutyEndOn: day(2), phone: ''
+  }, sessionPharmacie);
+  assert.equal(finAvantDebut.status, 422, 'la fin de garde ne peut pas précéder le début');
+
+  // Le DÉPÔT ne touche pas aux carnets de la caisse.
+  assert.equal((await call('/api/patients', 'POST', { name: 'Test Depot', service: '', note: '' }, sessionDepot)).status, 403,
+    'le dépôt n’écrit pas dans le référentiel des patients');
+
+  // ── Stock : 30 boîtes au dépôt, 20 transférées au comptoir (FEFO identique à la vente tsotra).
+  const produit = (await call('/api/products', 'POST', {
+    name: 'Hôpital Test Amoxicilline 500 mg', presentation: '', categoryId: null, unit: 'boîte',
+    minStock: 5, maxStock: null, note: '', active: true, marginRate: 20
+  })).body;
+  const reception = await call('/api/receipts', 'POST', {
+    requestKey: uuid(), supplierId: supplier.id, fees: '0', note: '',
+    lines: [{ productId: produit.id, number: 'HOP-A', quantity: 30, purchasePrice: '500', receivedOn: day(0), expiresOn: day(200), manufacturedOn: null }]
+  }, sessionDepot);
+  assert.equal(reception.status, 201);
+  const lotDepot = lotDuMagasin(await data(), 'HOP-A', 'DEPOT');
+  const transfert = await call('/api/transfers', 'POST', {
+    requestKey: uuid(), reason: 'Réassort comptoir hôpital',
+    lines: [{ lotId: lotDepot.id, quantity: 20 }]
+  }, sessionDepot);
+  assert.equal(transfert.status, 201);
+
+  // ── Vente TSOTRA de référence (inchangée) : pas de patient, pas de prescripteur.
+  const tsotra = await call('/api/sales', 'POST', {
+    requestKey: uuid(), customerName: 'Client passage', note: '',
+    lines: [{ productId: produit.id, quantity: 1 }]
+  }, sessionPharmacie);
+  assert.equal(tsotra.status, 201);
+  assert.equal(tsotra.body.patientId, null, 'la vente tsotra ne porte aucun carnet');
+
+  // Pas d'ordonnance pour une vente tsotra : le serveur renvoie au ticket.
+  const ordoTsotra = await fetch(`${base}/api/sales/${tsotra.body.id}/ordonnance`, { headers: { Cookie: cookie } });
+  assert.equal(ordoTsotra.status, 422, 'pas de carnet → ordonnance refusée, ticket à la place');
+
+  // ── Vente sur CARNET : patient + prescripteur, stock FEFO du comptoir comme d'habitude.
+  const carnet = await call('/api/sales', 'POST', {
+    requestKey: uuid(), customerName: '', note: 'Carnet du 3e étage',
+    patientId: patient.body.id, medicalStaffId: staff.body.id,
+    lines: [{ productId: produit.id, quantity: 2 }]
+  }, sessionPharmacie);
+  assert.equal(carnet.status, 201, JSON.stringify(carnet.body));
+  assert.equal(carnet.body.patientId, patient.body.id, 'le patient du carnet est enregistré sur la vente');
+  assert.equal(carnet.body.medicalStaffId, staff.body.id, 'le prescripteur est enregistré sur la vente');
+  assert.equal(carnet.body.customerName, 'Rasoamanana Laza', 'sans nom saisi, le client devient le patient hospitalisé');
+  const donneesApres = await data();
+  assert.equal(lotDuMagasin(donneesApres, 'HOP-A', 'PHARMACY').quantity, 17,
+    'sortie de stock du comptoir : 20 − 1 (tsotra) − 2 (carnet)');
+
+  // Vente phantom : patient inconnu ou clôturé → 422.
+  const patientInconnu = await call('/api/sales', 'POST', {
+    requestKey: uuid(), customerName: '', note: '', patientId: 999999, medicalStaffId: null,
+    lines: [{ productId: produit.id, quantity: 1 }]
+  }, sessionPharmacie);
+  assert.equal(patientInconnu.status, 422, 'le patient doit exister');
+
+  // ── L'ORDONNANCE : patient, prescripteur, médicaments, SANS montants.
+  const ordo = await fetch(`${base}/api/sales/${carnet.body.id}/ordonnance`, { headers: { Cookie: cookie } });
+  assert.equal(ordo.status, 200);
+  const page = await ordo.text();
+  assert.ok(page.includes('Ordonnance'), 'le document s’intitule Ordonnance');
+  assert.ok(page.includes('Rasoamanana Laza'), 'le patient figure sur l’ordonnance');
+  assert.ok(page.includes('Maternité B'), 'le service figure sur l’ordonnance');
+  assert.ok(page.includes('Rasoa Kanto'), 'le prescripteur figure sur l’ordonnance');
+  assert.ok(page.includes('Médecin'), 'le rôle du prescripteur est précisé');
+  assert.ok(page.includes('Amoxicilline'), 'les médicaments du carnet figurent');
+  assert.ok(page.includes('2 boîtes'), 'quantité dans l’unité du carnet');
+  assert.ok(page.includes('Exemplaire du patient') && page.includes('Copie pharmacie'),
+    'deux exemplaires (patient + pharmacie)');
+  assert.ok(page.includes('size: A5 portrait'), 'format A5 portrait');
+  assert.ok(!page.includes('Prix unitaire') && !page.includes('Montant') && !page.includes('Total à payer'),
+    'AUCUN montant sur l’ordonnance');
+
+  // Le TICKET de cette même vente reste disponible (interne) et montre le patient.
+  const ticketCarnet = await fetch(`${base}/api/documents/SALE/${carnet.body.id}/print`, { headers: { Cookie: cookie } });
+  assert.equal(ticketCarnet.status, 200, 'le ticket interne reste imprimable');
+  assert.ok((await ticketCarnet.text()).includes('Rasoamanana Laza'), 'ticket : client = patient du carnet');
+
+  // ── ACTIVITÉ du prescripteur : patients préinscrits + médicaments.
+  const activite = await call(`/api/staff/${staff.body.id}/activite`);
+  assert.equal(activite.status, 200);
+  assert.ok(activite.body.ventes.some(v => v.patient === 'Rasoamanana Laza'
+    && v.lignes.some(l => l.product.includes('Amoxicilline'))),
+    'la vue docteur montre ses patients et les médicaments de chaque carnet');
+
+  // ── Sortie du patient : vente refusée ; réactivation : vente acceptée à nouveau.
+  await call(`/api/patients/${patient.body.id}`, 'PUT', { active: false }, sessionPharmacie);
+  const patientSorti = await call('/api/sales', 'POST', {
+    requestKey: uuid(), customerName: '', note: '', patientId: patient.body.id, medicalStaffId: null,
+    lines: [{ productId: produit.id, quantity: 1 }]
+  }, sessionPharmacie);
+  assert.equal(patientSorti.status, 422, 'un patient sorti du service ne peut plus être facturé');
+  const reactif = await call(`/api/patients/${patient.body.id}`, 'PUT', { active: true }, sessionPharmacie);
+  assert.equal(reactif.body.active, true, 'la réactivation reste possible (historique conservé)');
+});
+
+
+
+test('2.7.36 — séjours + ordonnance unique du patient, TDR par dates, employé enregistreur', async () => {
+  // ── Le patient connu (créé au test 2.7.35) garde son créateur + son admission.
+  let listePatients = (await call('/api/patients')).body;
+  const connu = listePatients.find(p => p.name === 'Rasoamanana Laza');
+  assert.ok(connu, 'le patient créé en 2.7.35 est toujours là');
+  assert.equal(connu.createdByName, 'Pharmacien Test', 'la liste montre l’employé qui l’a enregistré');
+  assert.equal(connu.admittedOn, day(0), 'date d’admission = jour de l’enregistrement (par défaut)');
+
+  // Nouveau patient avec admission déclarée il y a 3 jours.
+  const patient2 = await call('/api/patients', 'POST', {
+    name: 'Be Tsiry', service: 'Chirurgie A', note: '', admittedOn: day(-3)
+  }, sessionPharmacie);
+  assert.equal(patient2.status, 201);
+  assert.equal(patient2.body.admittedOn, day(-3), 'l’admission déclarée à la saisie est respectée');
+
+  // ── GARDE PAR PÉRIODE SUR LA FICHE (2.7.38) : modification des dates.
+  const staff = (await call('/api/staff')).body.find(m => m.name === 'Dr Rasoa Kanto');
+  assert.equal(staff.dutyStartOn, day(0), 'la liste des employés montre le début de garde');
+  assert.equal(staff.dutyEndOn, day(6), 'la liste des employés montre la fin de garde');
+  const majOk = await call(`/api/staff/${staff.id}`, 'PUT', {
+    dutyStartOn: day(10), dutyEndOn: day(17)
+  }, sessionPharmacie);
+  assert.equal(majOk.status, 200, 'prolongation de la garde : nouvelles dates acceptées');
+  const majFauss = await call(`/api/staff/${staff.id}`, 'PUT', {
+    dutyEndOn: day(5)
+  }, sessionPharmacie);
+  assert.equal(majFauss.status, 422, 'fin AVANT le début : refusée même en modification partielle');
+  // Les anciennes adresses des « Périodes de garde » multiples n'existent plus.
+  assert.equal((await call(`/api/staff/${staff.id}/gardes`, 'POST', { startOn: day(0), endOn: day(1), note: '' }, sessionPharmacie)).status, 404,
+    'l’adresse des périodes multiples a disparu (2.7.38)');
+
+  // ── CONTINUITÉ du séjour : le même patient rachète (demain il achètera
+  //    autant) — une SEULE ordonnance récapitule tout.
+  const produit = (await data()).products.find(p => p.name === 'Hôpital Test Amoxicilline 500 mg');
+  const rachat = await call('/api/sales', 'POST', {
+    requestKey: uuid(), customerName: '', note: 'Lendemain, même patient',
+    patientId: connu.id, medicalStaffId: staff.id,
+    lines: [{ productId: produit.id, quantity: 1 }]
+  }, sessionPharmacie);
+  assert.equal(rachat.status, 201, 'le même patient rachète le jour suivant (2 ventes sur le séjour)');
+
+  // ── Liste des séjours (onglet « Clients hôpital » de l’historique).
+  const listeSejours = (await call('/api/patients/sejours')).body;
+  const ligne = listeSejours.find(s => s.patient === 'Rasoamanana Laza');
+  assert.ok(ligne, 'le patient figure parmi les clients hôpital');
+  assert.equal(ligne.service, 'Maternité B', 'le service du patient remonte');
+  assert.equal(ligne.saleCount, 2, 'deux carnets sous un même patient (continuité)');
+  assert.ok(ligne.prescribers.some(p => p.name === 'Dr Rasoa Kanto'), 'le docteur auquel il rend visite est visible');
+  // Le dépôt ne voit pas cette liste (permission « sale »).
+  assert.equal((await call('/api/patients/sejours', 'GET', undefined, sessionDepot)).status, 403,
+    'le dépôt ne peut pas lire les séjours');
+
+  // ── Détail du séjour : achats DANS L’ORDRE + médicaments CUMULÉS.
+  const detailSejour = (await call(`/api/patients/${ligne.patientId}/sejour`)).body;
+  assert.equal(detailSejour.ventes.length, 2, 'achats du séjour listés');
+  assert.ok(new Date(detailSejour.ventes[0].date) <= new Date(detailSejour.ventes[1].date),
+    'les achats sont chronologiques (le séjour se lit du début à la fin)');
+  const amoxiTotal = detailSejour.medecines.find(m => m.product.includes('Amoxicilline'));
+  assert.equal(amoxiTotal.saleQuantity, 3, '2 boîtes + 1 boîte = 3 boîtes cumulées sur le séjour');
+  assert.equal(detailSejour.patient.createdByName, 'Pharmacien Test', 'employé enregistreur dans le détail');
+
+  // ── UNE SEULE ORDONNANCE de séjour (cumul, admission, prescripteurs —
+  //    et SANS MONTANTS, comme l’ordonnance par carnet).
+  const ordoSejour = await fetch(`${base}/api/patients/${ligne.patientId}/ordonnance`, { headers: { Cookie: cookie } });
+  assert.equal(ordoSejour.status, 200);
+  const pageSejour = await ordoSejour.text();
+  assert.ok(pageSejour.includes('Ordonnance de séjour'), 'le document s’intitule ordonnance de séjour');
+  assert.ok(pageSejour.includes('Rasoamanana Laza'), 'le patient y figure');
+  assert.ok(pageSejour.includes('Admis à l’hôpital le'), 'la date d’admission est marquée');
+  assert.ok(pageSejour.includes('Rasoa Kanto'), 'le prescripteur vu est marqué');
+  assert.ok(pageSejour.includes('3 boîtes'), 'quantité CUMULÉE de tout le séjour');
+  assert.ok(pageSejour.includes('Exemplaire du patient') && pageSejour.includes('Copie pharmacie'),
+    'deux exemplaires comme toujours');
+  // 2.7.37 — la demande est modifiée : l'ordonnance de séjour DOIT montrer
+  // quantité, prix unitaire et montant (et accepter une fenêtre du/au).
+  assert.ok(pageSejour.includes('Prix unitaire') && pageSejour.includes('Montant')
+    && pageSejour.includes('Total de l’ordonnance de séjour'),
+    'l’ordonnance de séjour porte quantités, prix unitaires, montants et total');
+  // Fenêtre « entre deux dates » : les deux carnets sont du même jour, une
+  // fenêtre « aujourd’hui → aujourd’hui+1 » les garde tous et s'imprime telle.
+  const demain = day(1);
+  const fenetreSejour = await fetch(`${base}/api/patients/${ligne.patientId}/ordonnance?du=${day(0)}&au=${demain}`,
+    { headers: { Cookie: cookie } });
+  assert.equal(fenetreSejour.status, 200, 'la fenêtre du/au est acceptée');
+  const fenetreHTML = await fenetreSejour.text();
+  assert.ok(fenetreHTML.includes('Période :'), 'la fenêtre choisie est imprimée');
+
+  // Un patient SANS achat n’a pas d’ordonnance à imprimer.
+  const ordoVide = await fetch(`${base}/api/patients/${patient2.body.id}/ordonnance`, { headers: { Cookie: cookie } });
+  assert.equal(ordoVide.status, 422, 'patient sans carnet : refuse proprement');
 });
 
 test('santé du service, contrôle d’arrêt', async () => {
@@ -1028,5 +1650,7 @@ test('santé du service, contrôle d’arrêt', async () => {
   await new Promise(resolve => server.close(resolve));
   await close();
 });
+
+
 
 void Product;

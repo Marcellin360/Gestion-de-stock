@@ -14,12 +14,17 @@ const reportQuery = z.object({
   from: isDate,
   to: isDate,
   supplierId: z.coerce.number().int().positive().optional(),
+  // 2.7.33 — teboka ⑪ : fiche de stock d'UN médicament (mouvements + solde cumulé).
+  productId: z.coerce.number().int().positive().optional(),
   // Filtre magasin proposé par l'écran Rapports pour certains états (stock,
   // mouvements, pertes, expirations, inventaires). Sans cette ligne, la requête
   // était refusée : « champ inconnu location ».
   location: z.enum(['DEPOT', 'PHARMACY', 'ALL']).optional(),
   page: z.coerce.number().int().min(1).default(1),
-  format: z.enum(['json', 'csv']).default('json')
+  format: z.enum(['json', 'csv']).default('json'),
+  // 2.7.71 — `?fmt=pdf` : le point de sortie « print » RÉPOND EN PDF
+  // téléchargeable (fiche de stock du menu « Stock », bouton « Imprimer »).
+  fmt: z.enum(['pdf']).optional()
 }).strict();
 
 export default function reportRoutes() {

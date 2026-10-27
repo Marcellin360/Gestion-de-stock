@@ -18,13 +18,16 @@ import { getSettings } from './settings.service.js';
 import { LOCATIONS, LOCATION_LABELS } from '../config/constants.js';
 
 export const REPORT_TYPES = [
-  'fiche', 'fiche_depot', 'stock', 'movements', 'transfers', 'sales', 'receipts',
+  'fiche', 'fiche_depot', 'fiche_produit', 'stock', 'movements', 'transfers', 'sales', 'receipts',
   'losses', 'expirations', 'inventories', 'prices', 'suppliers'
 ];
 
 export const REPORT_LABELS = {
   fiche: 'Fiche de stock — PHARMACIE (initial · entrées · sorties · final)',
   fiche_depot: 'Fiche de stock — DÉPÔT (initial · entrées · sorties · final)',
+  // 2.7.33 — teboka ⑪ : la fiche individuelle d'UN médicament, mouvement par
+  // mouvement avec solde cumulé (le registre papier « par article »).
+  fiche_produit: 'Fiche de stock du produit (mouvements et solde cumulé)',
   stock: 'État du stock',
   movements: 'Mouvements de stock',
   transfers: 'Transferts dépôt → pharmacie',
@@ -46,21 +49,25 @@ const LOCATION_PAR_DEFAUT = {
 };
 
 /** Sélectionne et exécute la requête correspondant au rapport demandé. */
-export async function buildReport({ type, from, to, supplierId = null, location = null, page = 1, limit = LIMIT }, transaction) {
+export async function buildReport({ type, from, to, supplierId = null, productId = null, location = null, page = 1, limit = LIMIT }, transaction) {
   ensure(REPORT_TYPES.includes(type), 'Type de rapport inconnu.');
   ensure(from <= to, 'Période invalide : la date de début est postérieure à la date de fin.');
+  // Teboka ⑪ : la fiche individuelle exige le médicament concerné.
+  if (type === 'fiche_produit') ensure(productId, 'Choisissez le médicament dont vous voulez la fiche de stock.');
 
   // Le magasin demandé : « ALL » (les deux, avec une colonne Magasin) ou l'un des deux.
   let magasin = location || LOCATION_PAR_DEFAUT[type] || 'PHARMACY';
   if (type === 'fiche_depot') magasin = 'DEPOT';
   if (type === 'fiche') magasin = 'PHARMACY';
   ensure(magasin === 'ALL' || LOCATIONS.includes(magasin), 'Magasin inconnu.');
+  // La fiche d'un produit raisonne sur UN magasin (jamais les deux fusionnés).
+  if (type === 'fiche_produit' && magasin === 'ALL') magasin = 'PHARMACY';
 
   const { start, end } = dayRange(from, to);
   const offset = (page - 1) * limit;
   const settings = await getSettings(transaction);
   const replacements = {
-    start, end, supplierId, limit, offset,
+    start, end, supplierId, productId, limit, offset,
     onDate: today(),
     horizon: addDays(today(), Number(settings.expiryDays || 90)),
     cmp: settings.valuation,
@@ -133,6 +140,30 @@ export async function buildReport({ type, from, to, supplierId = null, location 
     // Fiche de stock du DÉPÔT : même présentation, magasin de la réserve.
     fiche_depot: ficheSql(false),
 
+    // 2.7.33 — teboka ⑪ Fiche de stock D'UN médicament : chaque mouvement de la
+    // période, dans l'ordre chronologique, avec le SOLDE après chaque ligne —
+    // la fiche d'article du registre papier (Date · Document · Entrée · Sortie ·
+    // Solde). Le solde part du stock antérieur à la période (cumul SQL `OVER`).
+    fiche_produit: `
+      SELECT m.created_at AS "Date", m.document_type AS "Document", m.kind AS "Nature",
+             l.number AS "Lot",
+             CASE WHEN m.quantity > 0 THEN ROUND(m.quantity, 3)::float8 END AS "Entrées",
+             CASE WHEN m.quantity < 0 THEN ROUND(-m.quantity, 3)::float8 END AS "Sorties",
+             ROUND((COALESCE(avant.qte, 0)
+                    + SUM(m.quantity) OVER (ORDER BY m.id)), 3)::float8 AS "Solde",
+             m.unit_cost AS "Coût unitaire (Ar)", u.name AS "Utilisateur",
+             COALESCE(m.reason, '') AS "Motif"
+      FROM movements m
+      JOIN lots l ON l.id = m.lot_id
+      JOIN users u ON u.id = m.user_id
+      LEFT JOIN (
+        SELECT SUM(quantity) AS qte FROM movements
+        WHERE location = :location AND product_id = :productId AND created_at < :start
+      ) avant ON TRUE
+      WHERE m.product_id = :productId AND m.location = :location
+        AND m.created_at >= :start AND m.created_at < :end
+      ORDER BY m.id ASC`,
+
     stock: `
       SELECT p.code AS "Code", p.name AS "Médicament", c.name AS "Catégorie", p.unit AS "Unité",
              CASE l.location WHEN 'DEPOT' THEN 'Dépôt' ELSE 'Pharmacie' END AS "Magasin",
@@ -187,7 +218,11 @@ export async function buildReport({ type, from, to, supplierId = null, location 
              CASE sl.sale_unit WHEN 'BOX' THEN p.unit WHEN 'BLISTER' THEN 'Plaquette' ELSE 'Comprimé' END AS "Forme",
              p.name AS "Médicament", l.number AS "Lot",
              sl.unit_price AS "Prix unitaire (Ar)", sl.unit_cost AS "Coût retenu (Ar)",
-             ROUND(sl.margin, 2) AS "Marge (Ar)", u.name AS "Servi par"
+             ROUND(sl.margin, 2) AS "Marge (Ar)",
+             /* 2.7.79 — « Servi par » SAISI à la caisse : le nom tapé au
+                moment de la vente (cousu en tête de la note, utils/serviPar.js)
+                prévaut ; à défaut, le compte connecté comme avant. */
+             COALESCE(SUBSTRING(sa.note FROM '⟦Servi par : ([^⟧]+)⟧'), u.name) AS "Servi par"
       FROM sale_lines sl
       JOIN sales sa ON sa.id = sl.sale_id
       JOIN products p ON p.id = sl.product_id

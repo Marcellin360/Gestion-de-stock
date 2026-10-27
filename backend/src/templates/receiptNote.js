@@ -7,6 +7,8 @@ export function receiptNote({ receipt, lines, pharmacy, supplier, products, user
   const body = table([
     { label: 'Médicament', render: line => `<strong>${escapeHtml(products.find(p => p.id === line.productId)?.name || '')}</strong>` },
     { label: 'Lot', render: line => escapeHtml(line.number) },
+    // 2.7.49 — fabricant saisi à la réception, lot par lot (fiche imprimée).
+    { label: 'Fabriquant', render: line => escapeHtml(line.manufacturer || '—') },
     { label: 'Expiration', render: line => escapeHtml(formatDate(line.expiresOn)) },
     { label: 'Qté reçue', align: 'right', render: line => formatNumber(line.quantity) },
     { label: 'Prix d’achat', align: 'right', render: line => formatMoney(line.purchasePrice, currency) },
@@ -24,7 +26,9 @@ export function receiptNote({ receipt, lines, pharmacy, supplier, products, user
       ['Date de réception', formatDate(receipt.createdAt)],
       ['Destination', 'Dépôt (réserve) — la pharmacie sera servie par transfert'],
       ['Récepteur', user?.name || ''],
-      ['Frais de livraison', formatMoney(receipt.fees, currency)]
+      // 2.7.47 — frais automatiques (Paramètres → « Frais d'achat », % du PA),
+      // il n'y a plus de frais de livraison saisis manuellement.
+      ['Frais appliqués (automatiques)', formatMoney(receipt.fees, currency)]
     ],
     body,
     footer: 'Contrôler les quantités, les numéros de lot et les dates d’expiration avant rangement. Signer et classer ce bon.'

@@ -19,6 +19,15 @@
 //     un clic (ou la touche Entrée) sélectionne le lot ;
 //   • la LISTE DÉROULANTE : elle reste disponible pour ceux qui préfèrent voir
 //     tous les lots du dépôt d'un seul coup.
+//
+// 2.7.78 — TEXTES ENLEVÉS (demande de l'officine, formulaire épuré) : la
+//   consigne « C'est ce motif qui apparaît dans l'historique du dépôt », la
+//   bannière bleue FEFO (« Le lot le plus proche de la péremption part en
+//   premier… », la règle reste APPLIQUÉE), le badge « Le stock du dépôt
+//   diminue dans le même mouvement que celui de la pharmacie » et l'exemple
+//   de remarque (« Ex. : besoin du week-end… ») sont RETIRÉS — et le bouton
+//   icône « Retirer » de chaque ligne passe en ROUGE plein. La mécanique
+//   (FEFO, recherche, liste, envoi) ne change pas.
 import { useMemo, useState } from 'react';
 import { Plus, Trash2, ArrowRightLeft } from 'lucide-react';
 import { stock } from '../api/endpoints.js';
@@ -57,6 +66,8 @@ const ITEM_VIDE = { padding: '8px 10px', fontSize: '.84rem', color: 'var(--slate
 export default function TransferForm({ onDone, onCancel }) {
   const { lots, products, productName, settings } = useData();
   const toast = useToast();
+  // 2.7.78 — la consigne « C'est ce motif qui apparaît dans l'historique du
+  // dépôt » est retirée (le champ Motif reste, sans texte d'aide).
   const [entete, setEntete] = useState({ reason: TRANSFER_REASONS[0], note: '' });
   const [lignes, setLignes] = useState([{ lotId: '', quantity: 1, recherche: '' }]);
   // Ligne dont la liste de suggestions est ouverte + suggestion surlignée.
@@ -177,7 +188,7 @@ export default function TransferForm({ onDone, onCancel }) {
       ) : null}
 
       <div className="grid grid--2">
-        <Field label="Motif du transfert" hint="C’est ce motif qui apparaît dans l’historique du dépôt">
+        <Field label="Motif du transfert">
           <Select value={entete.reason} onChange={e => setEntete({ ...entete, reason: e.target.value })}>
             {TRANSFER_REASONS.map(reason => <option key={reason} value={reason}>{reason}</option>)}
           </Select>
@@ -187,13 +198,10 @@ export default function TransferForm({ onDone, onCancel }) {
         </Field>
       </div>
 
-      <Banner tone="info">
-        <strong>Le lot le plus proche de la péremption part en premier (FEFO).</strong> Pour chaque
-        médicament, seul ce lot est proposé — repéré « FEFO » ; cliquer un lot plus lointain affiche
-        une notification qui indique lequel envoyer d’abord. Un lot périmé ne part jamais : il se
-        sort en « Pertes et dons ». Recherchez par nom, code ou n° de lot, ou servez-vous de la liste
-        déroulante sous la recherche.
-      </Banner>
+      {/* 2.7.78 — la bannière explicative FEFO (« Le lot le plus proche de la
+          péremption part en premier… ») est RETIRÉE : la règle FEFO reste
+          APPLIQUÉE (seul le lot repéré « FEFO » est proposable, un clic sur un
+          lot lointain affiche toujours la notification d'aiguillage). */}
 
       <div className="table-scroll">
         <table className="data">
@@ -240,6 +248,9 @@ export default function TransferForm({ onDone, onCancel }) {
                             const refus = motifRefus(item);
                             return (
                               <button type="button" key={item.id} role="option" aria-selected={rang === surbrillance}
+                                title={refus
+                                  ? `${productName(item.productId)} · lot ${item.number} — ce lot n'est PAS proposable : ${refus}`
+                                  : `${productName(item.productId)} · lot ${item.number} · dépôt : ${integer(item.quantity)} en stock — lot FEFO, à envoyer d’abord (le plus proche de la péremption)`}
                                 style={{ ...(refus ? ITEM_REFUSE : ITEM), background: rang === surbrillance ? 'var(--teal-100)' : 'transparent' }}
                                 onMouseDown={e => e.preventDefault()}
                                 onMouseEnter={() => setSurbrillance(rang)}
@@ -266,7 +277,8 @@ export default function TransferForm({ onDone, onCancel }) {
                       onChange={e => choisir(index, lots.find(item => Number(item.id) === Number(e.target.value)))}>
                       <option value="">— choisir un lot du dépôt —</option>
                       {lotsDepot.map(item => (
-                        <option key={item.id} value={item.id}>
+                        <option key={item.id} value={item.id}
+                          title={`Stock du dépôt pour ce lot : ${integer(item.quantity)} — ${motifRefus(item) ? `pas proposable : ${motifRefus(item)}` : 'lot FEFO, à envoyer d’abord'}`}>
                           {etiquetteLot(item)}{item.expiresOn ? ` (exp. ${item.expiresOn})` : ' (sans date)'}
                           {motifRefus(item) ? ' — pas encore : un lot expire avant' : ' — FEFO, à envoyer d’abord'}
                         </option>
@@ -280,7 +292,9 @@ export default function TransferForm({ onDone, onCancel }) {
                   </td>
                   <td className="num">{money(lot ? Number(lot.unitCost) * Number(ligne.quantity || 0) : 0)}</td>
                   <td className="right">
-                    <Btn variant="ghost" icon={Trash2} disabled={lignes.length === 1}
+                    {/* 2.7.78 — le bouton icône « Retirer » passe en ROUGE plein
+                        (demande de l'officine). */}
+                    <Btn variant="danger" icon={Trash2} disabled={lignes.length === 1}
                       onClick={() => setLignes(liste => liste.filter((_, i) => i !== index))} aria-label="Retirer" />
                   </td>
                 </tr>
@@ -297,15 +311,18 @@ export default function TransferForm({ onDone, onCancel }) {
         </table>
       </div>
 
+      {/* 2.7.78 — le badge « Le stock du dépôt diminue dans le même mouvement
+          que celui de la pharmacie » est retiré d'ici. */}
       <div className="row" style={{ marginTop: 10 }}>
         <Btn icon={Plus}
           onClick={() => { setLignes(liste => [...liste, { lotId: '', quantity: 1, recherche: '' }]); setOuvert(lignes.length); }}>
           Ajouter un lot
         </Btn>
-        <Badge tone="info">Le stock du dépôt diminue dans le même mouvement que celui de la pharmacie</Badge>
       </div>
 
-      <Field label="Remarque (facultative)" hint="Ex. : besoin du week-end, rupture au comptoir depuis ce matin…">
+      {/* 2.7.78 — l'exemple « Ex. : besoin du week-end, rupture au comptoir
+          depuis ce matin… » est retiré ; le champ Remarque reste. */}
+      <Field label="Remarque (facultative)">
         <Textarea value={entete.note} onChange={e => setEntete({ ...entete, note: e.target.value })} />
       </Field>
 

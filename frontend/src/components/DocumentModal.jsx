@@ -4,22 +4,40 @@
 // fenêtre de l'application (même présentation qu'un formulaire), avec :
 //   • l'en-tête (référence, date, état, motif, fournisseur, valeur…),
 //   • le tableau des lignes (médicament, lot, expiration, quantité, valeurs),
-//   • un bouton « Télécharger » qui enregistre le document tout de suite.
+//   • les boutons « Télécharger » et « Imprimer ».
+//
+// 2.7.72 — pour les documents PDF (transfert : l'appelant renvoie `pdf: true`),
+//   « Télécharger » ET « Imprimer » enregistrent DIRECTEMENT le fichier PDF
+//   (plus de .html déguisé ni d'onglet à imprimer à la main) — même repli
+//   « navigateur » que la vente quand la protection web locale bloque le fetch.
+//
+// 2.7.74 — « Fermer » passe au ROUGE plein (variante « danger », comme dans
+//   l'historique des ventes et le détail de séjour de l'hôpital).
+//
+// 2.7.78 — nouvelle prop `sansImprimer` (demande de l'officine) : quand elle
+//   est passée par l'écran appelant (réceptions, pertes), le bouton
+//   « Imprimer » n'est PAS affiché — le détail ne garde que « Fermer » (rouge)
+//   et « Télécharger » (vert). La fonction d'impression reste en place : les
+//   autres documents ne changent rien.
 //
 // L'appelant fournit une fonction `charger` qui renvoie une structure normalisée :
-//   { reference, type, date, statut, infos: [{label, valeur}], lignes: [...], total }
+//   { reference, type, date, statut, infos: [{label, valeur}], lignes: [...],
+//     total, imprimable, pdf? }
 import { Fragment, useEffect, useState } from 'react';
 import { Download, Printer, FileText } from 'lucide-react';
-import { downloadDocument, openPrintable } from '../api/client.js';
+import { downloadDocument, downloadPdf, openPrintable } from '../api/client.js';
+import { useToast } from '../context/ToastContext.jsx';
 import { Banner, Btn, Empty, Modal, Table } from './ui.jsx';
 import { dateTime, integer, money } from '../utils/format.js';
+import { COULEUR_IMPRIMER, MESSAGE_PDF_NAVIGATEUR } from './SaleHistoryModal.jsx';
 
 /** Date courte (AAAA-MM-JJ → 01/01/2027) ; « — » si la date n'existe pas. */
 const dateCourte = valeur => (valeur
   ? new Date(`${String(valeur).slice(0, 10)}T12:00:00`).toLocaleDateString('fr-FR')
   : '—');
 
-export default function DocumentModal({ titre, charger, onClose, ajustements = [] }) {
+export default function DocumentModal({ titre, charger, onClose, ajustements = [], sansImprimer = false }) {
+  const toast = useToast();
   const [document, setDocument] = useState(null);
   const [error, setError] = useState(null);
   const [telechargement, setTelechargement] = useState(false);
@@ -37,30 +55,61 @@ export default function DocumentModal({ titre, charger, onClose, ajustements = [
     return () => { actif = false; };
   }, [charger]);
 
-  const nomFichier = document?.reference ? `${document.reference}.html` : 'document.html';
+  // 2.7.72 — documents PDF (transfert, réception dès la 2.7.78) : le
+  // téléchargement produit le VRAI PDF (chez qui le bouton « Imprimer »,
+  // quand il est affiché, l'enregistre aussi, comme le menu Stock).
+  const estPdf = Boolean(document?.pdf);
+  const nomFichier = document?.reference ? `${document.reference}.${estPdf ? 'pdf' : 'html'}` : `document.${estPdf ? 'pdf' : 'html'}`;
 
-  const telecharger = async () => {
+  // Chemin du PDF : `?fmt=pdf` ajouté proprement (le chemin peut déjà porter des paramètres).
+  const cheminPdf = () => `${document.imprimable}${document.imprimable.includes('?') ? '&' : '?'}fmt=pdf`;
+
+  const telecharger = () => {
     if (!document?.imprimable) return;
     setTelechargement(true);
     setError(null);
-    try {
-      await downloadDocument(document.imprimable, nomFichier);
-    } catch (cause) {
-      setError(cause);
-    } finally {
-      setTelechargement(false);
+    const termine = () => setTelechargement(false);
+    if (estPdf) {
+      downloadPdf(cheminPdf(), nomFichier)
+        .then(result => {
+          if (result?.via === 'navigateur') toast.warn(MESSAGE_PDF_NAVIGATEUR);
+        })
+        .catch(cause => { setError(cause); toast.error(cause.message || 'Téléchargement du PDF impossible.'); })
+        .finally(termine);
+      return;
     }
+    downloadDocument(document.imprimable, nomFichier)
+      .catch(cause => setError(cause))
+      .finally(termine);
+  };
+
+  // 2.7.72 — « Imprimer » d'un document PDF : télécharge directement le PDF
+  // (comportement uniforme avec la vente et le menu « Stock », 2.7.71) ;
+  // les autres documents gardent l'impression navigateur classique.
+  // 2.7.78 — le bouton n'est plus AFFICHÉ quand `sansImprimer` est passé
+  // (réceptions, pertes) ; la fonction reste disponible ici.
+  const imprimer = () => {
+    if (estPdf) telecharger();
+    else if (document?.imprimable) openPrintable(document.imprimable);
   };
 
   return (
     <Modal title={titre || `Détail ${document?.reference || ''}`} onClose={onClose} wide
       footer={<>
-        <Btn variant="ghost" onClick={onClose}>Fermer</Btn>
-        {document?.imprimable ? (
-          <Btn icon={Printer} onClick={() => openPrintable(document.imprimable)}>Imprimer</Btn>
+        {/* 2.7.74 — « Fermer » en ROUGE plein (même convention que l'historique
+            des ventes et le détail de séjour). */}
+        <Btn variant="danger" onClick={onClose}>Fermer</Btn>
+        {/* 2.7.78 — écrans « sans Imprimer » (réceptions, pertes) : seuls
+            « Fermer » et « Télécharger » restent au pied de la boîte. */}
+        {!sansImprimer && document?.imprimable ? (
+          <Btn variant={estPdf ? 'ghost' : 'default'} {...(estPdf ? { style: COULEUR_IMPRIMER } : {})}
+            icon={Printer} onClick={imprimer} disabled={telechargement}>Imprimer</Btn>
         ) : null}
         {document?.imprimable ? (
-          <Btn variant="primary" icon={Download} onClick={telecharger} disabled={telechargement}>
+          // 2.7.73 — en mode PDF, « Télécharger » aussi passe au VERT plein
+          // (famille téléchargement/impression, à la demande de l'officine).
+          <Btn variant={estPdf ? 'ghost' : 'primary'} {...(estPdf ? { style: COULEUR_IMPRIMER } : {})}
+            icon={Download} onClick={telecharger} disabled={telechargement}>
             {telechargement ? 'Téléchargement…' : 'Télécharger'}
           </Btn>
         ) : null}
@@ -118,9 +167,18 @@ export default function DocumentModal({ titre, charger, onClose, ajustements = [
           )}
 
           <p className="muted" style={{ fontSize: '.82rem', marginTop: 10 }}>
-            <FileText size={14} /> « Télécharger » enregistre le document dans votre dossier
-            « Téléchargements » (fichier {nomFichier}) : il s’ouvre ensuite dans le navigateur et
-            peut être imprimé ou transformé en PDF. Aucun nouvel onglet ne s’ouvre ici.
+            {estPdf ? (
+              <><FileText size={14} /> « Télécharger » enregistre le PDF dans votre dossier
+                « Téléchargements » (fichier {nomFichier})
+                {/* 2.7.78 — la phrase sur « Imprimer » ne s'affiche que si le
+                    bouton est affiché (pas en réception ni en perte). */}
+                {sansImprimer ? ' — ouvrez-le et imprimez-le depuis votre lecteur PDF.' : <> ; « Imprimer » l’enregistre pareil —
+                  ouvrez-le et imprimez-le depuis votre lecteur PDF.</>} Aucun nouvel onglet ne s’ouvre ici.</>
+            ) : (
+              <><FileText size={14} /> « Télécharger » enregistre le document dans votre dossier
+                « Téléchargements » (fichier {nomFichier}) : il s’ouvre ensuite dans le navigateur et
+                peut être imprimé ou transformé en PDF. Aucun nouvel onglet ne s’ouvre ici.</>
+            )}
           </p>
         </>
       )}

@@ -8,6 +8,17 @@
 //   • seuls les profils autorisés (`prices`) peuvent CHANGER le taux : le bouton
 //     « % » leur est réservé — le serveur refuserait un autre profil
 //     (RG24 : la modification reste tracée dans l'historique des prix).
+//
+// 2.7.78 — présentation demandée par l'officine (même convention que les
+//   réceptions, fournisseurs et catégories) :
+//   • DEUX cartes : la première regroupe les filtres et le bouton « Nouveau
+//     médicament » ; la seconde porte le tableau, avec la recherche à droite ;
+//   • la colonne des gestes s'intitule « Action » et son contenu est CENTRÉ ;
+//   • couleurs pleines : « Modifier » BLEU (famille détail), « Historique des
+//     prix » VERT, « Désactiver » ROUGE et « Réactiver » VERT, avec un espace
+//     visible entre les boutons (.actes) ;
+//   • le paragraphe d'explication sous le tableau est RETIRÉ (le filtrage et
+//     le taux de marge n'ont pas changé).
 import { useMemo, useState } from 'react';
 import { Plus, Pencil, Percent, History, Ban, Check } from 'lucide-react';
 import { useData } from '../context/DataContext.jsx';
@@ -18,9 +29,10 @@ import ProductForm from '../forms/ProductForm.jsx';
 import MarginForm from '../forms/MarginForm.jsx';
 import { money, percent, integer } from '../utils/format.js';
 import { referentials } from '../api/endpoints.js';
+import { COULEUR_DETAIL, COULEUR_IMPRIMER, COULEUR_ANNULER } from '../components/SaleHistoryModal.jsx';
 
 export default function ProductsPage() {
-  const { products, stockByProduct, categoryName, settings, refresh, productName } = useData();
+  const { products, stockByProduct, categoryName, refresh } = useData();
   const { can } = useAuth();
   // La MODIFICATION du taux de marge reste réservée aux profils autorisés (RG24) :
   // le serveur refuse les autres (403), donc on ne leur montre pas le bouton « % ».
@@ -83,13 +95,12 @@ export default function ProductsPage() {
 
   return (
     <>
-      <Card title={`${lignes.length} médicament(s)`}
+      {/* 2.7.78 — carte 1 : filtres + création (comme les « Du / Au » de la
+          carte d'en-tête des réceptions et des transferts). */}
+      <Card title="Médicaments"
         actions={can('reference') ? <Btn variant="primary" icon={Plus} onClick={() => setEdition('nouveau')}>Nouveau médicament</Btn> : null}>
         <ErrorBox error={error} />
-        <div className="inline-form" style={{ marginBottom: 12 }}>
-          <Field label="Recherche">
-            <Input value={filtres.terme} onChange={e => setFiltres({ ...filtres, terme: e.target.value })} placeholder="Nom, code, principe actif…" />
-          </Field>
+        <div className="inline-form" style={{ marginBottom: 0 }}>
           <Field label="Catégorie">
             <Select value={filtres.categorie} onChange={e => setFiltres({ ...filtres, categorie: e.target.value })}>
               <option value="">Toutes</option>
@@ -106,21 +117,31 @@ export default function ProductsPage() {
             </Select>
           </Field>
         </div>
+      </Card>
 
+      {/* 2.7.78 — carte 2 : la liste, recherche à droite de l'en-tête
+          (même présentation que « N réception(s) sur la période »). */}
+      <Card title={`${lignes.length} médicament(s)`}
+        actions={<Field label="Recherche">
+          <Input value={filtres.terme} onChange={e => setFiltres({ ...filtres, terme: e.target.value })} placeholder="Nom, code, principe actif…" />
+        </Field>}>
         {lignes.length === 0 ? <Empty>Aucun médicament ne correspond à ces critères.</Empty> : (
           <Table columns={[
-            { label: 'Code' }, { label: 'Médicament' }, { label: 'Catégorie' },
+            // 2.7.31 — la colonne « Code » n'est plus affichée dans la liste
+            // (le code reste sur la fiche, pour l'étiquette et la douchette).
+            { label: 'Médicament' }, { label: 'Catégorie' },
             { label: 'Stock', num: true },
             ...(can(['prices', 'costs']) ? [{ label: 'CMP', num: true }, { label: 'Taux', num: true }] : []),
             { label: 'Prix de vente', num: true },
-            { label: 'Seuil', num: true }, { label: '' }
+            { label: 'Seuil', num: true },
+            // 2.7.78 — colonne des gestes CENTRÉE (comme réceptions/fournisseurs).
+            { label: 'Action', center: true }
           ]}>
             {lignes.map(produit => {
               const stock = stockByProduct(produit.id);
               const alerte = stock <= Number(produit.minStock);
               return (
-                <tr key={produit.id}>
-                  <td>{produit.code}</td>
+                <tr key={produit.id} title={`${produit.code} · stock total (dépôt + comptoir) : ${integer(stock)} ${produit.unit || 'unité'}`}>
                   <td className="wrap">
                     <strong>{produit.name}</strong>
                     <div className="muted" style={{ fontSize: '.78rem' }}>
@@ -143,26 +164,29 @@ export default function ProductsPage() {
                     )}
                   </td>
                   <td className="num">{integer(produit.minStock)}</td>
-                  <td className="right nowrap">
-                    {can('reference') ? <Btn variant="ghost" icon={Pencil} onClick={() => setEdition(produit)} aria-label="Modifier" /> : null}
-                    {peutVoirPrix ? <Btn variant="ghost" icon={Percent} onClick={() => setMarge(produit)} aria-label="Taux de marge" /> : null}
-                    <Btn variant="ghost" icon={History} onClick={() => voirHistorique(produit)} aria-label="Historique des prix" />
-                    {can('reference') ? (
-                      <Btn variant="ghost" icon={produit.active ? Ban : Check} onClick={() => setConfirmation(produit)}
-                        aria-label={produit.active ? 'Désactiver' : 'Réactiver'} />
-                    ) : null}
+                  {/* 2.7.78 — gestes CENTRÉS, PLEINS et espacés (.actes) :
+                      Modifier BLEU, Historique VERT, Désactiver ROUGE /
+                      Réactiver VERT (familles détail / impression / annulation). */}
+                  <td className="center nowrap">
+                    <span className="actes">
+                      {can('reference') ? <Btn variant="ghost" style={COULEUR_DETAIL} icon={Pencil} onClick={() => setEdition(produit)} aria-label="Modifier" /> : null}
+                      {peutVoirPrix ? <Btn variant="ghost" icon={Percent} onClick={() => setMarge(produit)} aria-label="Taux de marge" /> : null}
+                      <Btn variant="ghost" style={COULEUR_IMPRIMER} icon={History} onClick={() => voirHistorique(produit)} aria-label="Historique des prix" />
+                      {can('reference') ? (
+                        <Btn variant="ghost" style={produit.active ? COULEUR_ANNULER : COULEUR_IMPRIMER}
+                          icon={produit.active ? Ban : Check} onClick={() => setConfirmation(produit)}
+                          aria-label={produit.active ? 'Désactiver' : 'Réactiver'} />
+                      ) : null}
+                    </span>
                   </td>
                 </tr>
               );
             })}
           </Table>
         )}
-        <p className="muted" style={{ fontSize: '.82rem', marginTop: 10 }}>
-          Un médicament n’est jamais supprimé : il est désactivé pour rester lisible dans l’historique (RG19).
-          Mode de marge actuel : {settings.marginMode === 'SALE' ? 'sur le prix de vente' : 'sur le coût d’achat'}.
-          {' Le prix de vente est calculé par le logiciel : il découle du coût retenu et du taux de marge.'}
-          {peutVoirPrix ? '' : ' Seuls les postes autorisés peuvent modifier le taux (« % ») : la lecture du prix, elle, est ouverte à tous.'}
-        </p>
+        {/* 2.7.78 — le paragraphe d'explication qui suivait le tableau est
+            retiré (demande de l'officine) ; la règle RG19 et le calcul du
+            prix, eux, ne changent pas. */}
       </Card>
 
       {edition ? (

@@ -5,10 +5,11 @@ import { toCsv } from '../utils/csv.js';
 import { getSettings } from '../services/settings.service.js';
 
 export async function list(req, res) {
-  const { type, from, to, supplierId, location, page, format } = req.query;
+  const { type, from, to, supplierId, productId, location, page, format } = req.query;
   const result = await read(transaction => buildReport({
     type, from, to,
     supplierId: supplierId || null,
+    productId: productId || null,
     location: location || null,
     page: Number(page || 1),
     limit: format === 'csv' ? 20000 : 500
@@ -38,10 +39,24 @@ export async function list(req, res) {
 }
 
 export async function printable(req, res) {
-  const { type, from, to, supplierId, location } = req.query;
+  const { type, from, to, supplierId, productId, location } = req.query;
+  // 2.7.71 — `?fmt=pdf` : la fiche de stock se TÉLÉCHARGE directement en PDF
+  // (bouton « Imprimer » du menu « Stock » : plus de page HTML à imprimer à
+  // la main). Le document est dessiné par templates/etatStockPdf.js (A4
+  // paysage, toutes colonnes sauf seuil/situation, totaux et pagination).
+  if (req.query.fmt === 'pdf') {
+    const { etatStockPdfDoc } = await import('../services/ticket.service.js');
+    const { buffer, filename } = await read(transaction => etatStockPdfDoc({
+      type, from, to, supplierId: supplierId || null, productId: productId || null, location: location || null
+    }, req.user, transaction));
+    return res
+      .set('Content-Type', 'application/pdf')
+      .set('Content-Disposition', `attachment; filename="${filename}"`)
+      .send(buffer);
+  }
   const { reportHtml } = await import('../services/ticket.service.js');
   const html = await read(transaction => reportHtml({
-    type, from, to, supplierId: supplierId || null, location: location || null
+    type, from, to, supplierId: supplierId || null, productId: productId || null, location: location || null
   }, req.user, transaction));
   res.set('Content-Type', 'text/html; charset=utf-8').send(html);
 }

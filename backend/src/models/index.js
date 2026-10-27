@@ -17,11 +17,16 @@ import * as product from './product.model.js';
 import * as productForm from './productForm.model.js';
 import * as receipt from './receipt.model.js';
 import * as receiptLine from './receiptLine.model.js';
+import * as receiptCorrection from './receiptCorrection.model.js';
 import * as role from './role.model.js';
+import * as medicalStaff from './medicalStaff.model.js';
+import * as patient from './patient.model.js';
 import * as sale from './sale.model.js';
 import * as transfer from './transfer.model.js';
+import * as transferCorrection from './transferCorrection.model.js';
 import * as transferLine from './transferLine.model.js';
 import * as saleLine from './saleLine.model.js';
+import * as staffDuty from './staffDuty.model.js';
 import * as session from './session.model.js';
 import * as setting from './setting.model.js';
 import * as supplier from './supplier.model.js';
@@ -38,19 +43,24 @@ const definitions = [
   loss,
   lossLine,
   lot,
+  medicalStaff,
   movement,
+  patient,
   priceHistory,
   product,
   productForm,
   receipt,
   receiptLine,
+  receiptCorrection,
   role,
   sale,
   saleLine,
   session,
+  staffDuty,
   setting,
   supplier,
   transfer,
+  transferCorrection,
   transferLine,
   unitOfMeasure,
   user
@@ -80,13 +90,18 @@ export const {
   ProductForm,
   Receipt,
   ReceiptLine,
+  ReceiptCorrection,
   Role,
+  MedicalStaff,
+  Patient,
   Sale,
   SaleLine,
   Session,
   Setting,
+  StaffDuty,
   Supplier,
   Transfer,
+  TransferCorrection,
   TransferLine,
   UnitOfMeasure,
   User
@@ -114,12 +129,25 @@ Receipt.hasMany(ReceiptLine, { as: 'lines', foreignKey: 'receiptId' });
 ReceiptLine.belongsTo(Receipt, { as: 'receipt', foreignKey: 'receiptId' });
 ReceiptLine.belongsTo(Lot, { as: 'lot', foreignKey: 'lotId' });
 ReceiptLine.belongsTo(Product, { as: 'product', foreignKey: 'productId' });
+// 2.7.34 — teboka ③ : corrections de réception (dépôt propose → admin tranche).
+Receipt.hasMany(ReceiptCorrection, { as: 'corrections', foreignKey: 'receiptId' });
+ReceiptCorrection.belongsTo(Receipt, { as: 'receipt', foreignKey: 'receiptId' });
+ReceiptCorrection.belongsTo(User, { as: 'proposer', foreignKey: 'proposedBy' });
+ReceiptCorrection.belongsTo(User, { as: 'decider', foreignKey: 'decidedBy' });
 
 Sale.belongsTo(User, { as: 'author', foreignKey: 'userId' });
 Sale.hasMany(SaleLine, { as: 'lines', foreignKey: 'saleId' });
 SaleLine.belongsTo(Sale, { as: 'sale', foreignKey: 'saleId' });
 SaleLine.belongsTo(Lot, { as: 'lot', foreignKey: 'lotId' });
 SaleLine.belongsTo(Product, { as: 'product', foreignKey: 'productId' });
+// 2.7.35 — hôpital : vente liée au patient carnet + docteur/sage-femme voyageur.
+Sale.belongsTo(Patient, { as: 'patient', foreignKey: 'patientId' });
+Sale.belongsTo(MedicalStaff, { as: 'prescriber', foreignKey: 'medicalStaffId' });
+// 2.7.36 — périodes de garde (TDR par dates : du … au …, plusieurs par employé).
+MedicalStaff.hasMany(StaffDuty, { as: 'duties', foreignKey: 'staffId' });
+StaffDuty.belongsTo(MedicalStaff, { as: 'staff', foreignKey: 'staffId' });
+// 2.7.36 — le patient garde la trace de l'employé qui l'a enregistré.
+Patient.belongsTo(User, { as: 'registrar', foreignKey: 'createdBy' });
 
 Loss.belongsTo(User, { as: 'author', foreignKey: 'userId' });
 Loss.hasMany(LossLine, { as: 'lines', foreignKey: 'lossId' });

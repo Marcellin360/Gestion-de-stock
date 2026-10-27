@@ -1,13 +1,33 @@
-// Paramètres de l'officine : identité, valorisation du stock, mode et plage de
-// marge, horizon d'alerte de péremption. La valorisation est figée dès le
-// premier mouvement (RG10, RG22).
+// Paramètres de l'officine : identité, valorisation du stock, formule du prix
+// de vente (unique sur coût, 2.7.47), frais d'achat automatiques (% du PA,
+// 2.7.47), taux de marge UNIQUE (2.7.48), horizon d'alerte de péremption. La
+// valorisation est figée dès le premier mouvement (RG10, RG22).
+// 2.7.30 — libellés expliqués (horizon d'alerte, valorisation figée) et page
+// épurée : la bannière verbeuse « Valorisation figée » devient une ligne, et
+// le bloc dangereux « vente de lots périmés » (case + note sécurité) quitte
+// l'écran. `allowExpiredSale` reste dans `values` : il est renvoyé TEL QUEL à
+// l'enregistrement (la valeur stockée en base n'est jamais modifiée ici).
 import { useState } from 'react';
 import { Save, Info } from 'lucide-react';
 import { settings as settingsApi } from '../api/endpoints.js';
 import { useData } from '../context/DataContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
-import { Banner, Btn, Card, Check, ErrorBox, Field, Input, Select } from '../components/ui.jsx';
+import { Btn, Card, ErrorBox, Field, Input, Select } from '../components/ui.jsx';
 import { money, percent } from '../utils/format.js';
+
+// 2.7.29 — liste de taux continue de `debut` à `fin` (pas de 1 %). Si la valeur
+// enregistrée est hors de cette plage (ancien paramétrage 35 %, 40 %, 50 %…),
+// elle est AJOUTÉE triée pour rester visible au lieu d'être écrasée.
+const taux = (debut, fin, actuelle) => {
+  const liste = [];
+  for (let t = debut; t <= fin; t += 1) liste.push(t);
+  const valeur = Number(actuelle);
+  if (!liste.includes(valeur) && Number.isFinite(valeur)) {
+    liste.push(valeur);
+    liste.sort((a, b) => a - b);
+  }
+  return liste;
+};
 
 export default function SettingsPage() {
   const { settings, stats, refresh } = useData();
@@ -20,9 +40,13 @@ export default function SettingsPage() {
     currency: settings.currency || 'Ar',
     valuation: settings.valuation || 'LOT',
     pricingBasis: settings.pricingBasis || 'CMP',
+    // 2.7.47 — mode de marge UNIQUE sur coût : la valeur est conservée dans
+    // l'objet (renvoyée au serveur) mais n'est plus proposée au choix.
     marginMode: settings.marginMode || 'COST',
     minMargin: Number(settings.minMargin ?? 10),
     maxMargin: Number(settings.maxMargin ?? 30),
+    // 2.7.47 — taux des frais d'achat automatiques, % du PA (10 % par défaut).
+    feesRate: Number(settings.feesRate ?? 10),
     expiryDays: Number(settings.expiryDays ?? 90),
     allowExpiredSale: Boolean(settings.allowExpiredSale)
   }));
@@ -40,12 +64,14 @@ export default function SettingsPage() {
         ...values,
         minMargin: Number(values.minMargin),
         maxMargin: Number(values.maxMargin),
+        feesRate: Number(values.feesRate),
         expiryDays: Number(values.expiryDays)
       });
       toast.success('Paramètres enregistrés.');
       maj({
         minMargin: Number(enregistre.minMargin),
         maxMargin: Number(enregistre.maxMargin),
+        feesRate: Number(enregistre.feesRate ?? values.feesRate),
         expiryDays: Number(enregistre.expiryDays)
       });
       await refresh();
@@ -73,25 +99,24 @@ export default function SettingsPage() {
       </Card>
 
       <Card title="Valorisation et marges">
-        <Banner tone={stockValorise > 0 ? 'warn' : 'info'}
-          title={stockValorise > 0 ? 'Valorisation figée' : 'Valorisation encore modifiable'}>
-          <div className="row row--tight">
-            <span>
-              {stockValorise > 0
-                ? 'Des mouvements existent déjà : la méthode de valorisation ne peut plus changer sans migration comptable.'
-                : 'Aucun mouvement enregistré : la méthode peut encore être choisie librement.'}
-            </span>
-          </div>
-          <small>Stock actuel valorisé : {money(stats.stockValue)}</small>
-        </Banner>
-
+        {/* 2.7.30 — bannière verbeuse remplacée par UNE ligne d'information. */}
         <Field label="Méthode de valorisation du stock"
-          hint="LOT : coût de revient réel du lot (recommandé pour une officine). CMP : coût moyen pondéré du médicament.">
+          hint={"Comment le coût d'un médicament est évalué : LOT = le vrai prix de chaque réception est gardé, lot par lot (conseillé en officine). CMP = un seul prix moyen, recalculé à chaque réception."}>
           <Select value={values.valuation} onChange={e => maj({ valuation: e.target.value })}>
             <option value="LOT">Coût de revient réel du lot</option>
             <option value="CMP">Coût moyen pondéré (CMP)</option>
           </Select>
         </Field>
+        <p className="muted" style={{ fontSize: '.82rem' }}>
+          {/* « Valorisation figée » en une phrase : la méthode se bloque dès le
+              premier mouvement enregistré, sinon les coûts déjà calculés
+              deviendraient faux. */}
+          Stock actuel valorisé : <strong>{money(stats.stockValue)}</strong>
+          {' — '}
+          {stockValorise > 0
+            ? 'des mouvements existent déjà : la méthode est figée (RG10), tout changement demanderait une reprise comptable complète.'
+            : 'aucun mouvement enregistré pour l’instant : la méthode peut encore être choisie librement.'}
+        </p>
 
         <Field label="Prix de vente calculé sur"
           hint="Coût moyen pondéré (CMP) : les réceptions du même médicament sont additionnées puis moyennées — conseillé en officine. Dernier lot : le prix suit la dernière livraison.">
@@ -101,48 +126,58 @@ export default function SettingsPage() {
           </Select>
         </Field>
 
-        <Field label="Mode de calcul de la marge" hint="Le prix de vente est toujours calculé, jamais saisi (RG05).">
-          <Select value={values.marginMode} onChange={e => maj({ marginMode: e.target.value })}>
-            <option value="COST">Marge sur coût d’achat : prix = coût × (1 + taux)</option>
-            <option value="SALE">Marge sur prix de vente : prix = coût ÷ (1 − taux)</option>
-          </Select>
+        {/* 2.7.47 — formule unique du prix de vente : PV = coût × (1 + taux).
+            L'ancien mode « marge sur prix de vente » (coût ÷ (1−taux)) n'est
+            plus proposé ; l'information reste lisible ici. */}
+        <p className="muted" style={{ fontSize: '.82rem' }}>
+          Formule du prix de vente : <strong>PV = coût × (1 + taux)</strong> — marge calculée sur coût ;
+          le prix de vente est toujours calculé, jamais saisi (RG05).
+        </p>
+
+        {/* 2.7.47 — taux des FRAIS automatiques, % du prix d'achat (CU = PA ×
+            (1 + taux/100)), modifiable à tout moment : s'applique aux
+            réceptions suivantes, sans écraser les lots déjà reçus. */}
+        <Field label="Frais d'achat (% du prix d'achat)"
+          hint={`Frais appliqués automatiquement à chaque réception : coût unitaire = PA × (1 + ${values.feesRate} / 100). Par défaut 10 % : modifiable ici selon le besoin.`}>
+          <Input type="number" min="0" max="99.99" step="0.01" value={values.feesRate}
+            onChange={e => maj({ feesRate: e.target.value })} required />
         </Field>
 
         <div className="grid grid--2">
-          <Field label="Taux de marge minimum (%)" hint="Choisissez dans la liste">
-            <Select value={values.minMargin} onChange={e => maj({ minMargin: e.target.value })}>
-              {[10, 12, 15, 20, 25, 30].map(taux => <option key={taux} value={taux}>{taux} %</option>)}
-            </Select>
-          </Field>
-          <Field label="Taux de marge maximum (%)" hint="Choisissez dans la liste">
-            <Select value={values.maxMargin} onChange={e => maj({ maxMargin: e.target.value })}>
-              {[15, 20, 25, 30, 35, 40, 50].map(taux => <option key={taux} value={taux}>{taux} %</option>)}
+          {/* 2.7.48 — « Taux de marge » UNIQUE (fin de la plage min/max dans
+              l'interface) : un seul champ, liste déroulante de 10 % à 30 %
+              (liste continue, 2.7.29) ; le taux retenu est appliqué par le
+              serveur à TOUS les médicaments (PV = coût × (1 + taux)). */}
+          <Field label="Taux de marge (%)" hint="Un seul taux pour tous les médicaments — il s'applique à tout le catalogue à l'enregistrement (prix recalculés tout de suite)">
+            <Select value={values.minMargin}
+              onChange={e => { const t = Number(e.target.value); maj({ minMargin: t, maxMargin: t }); }}>
+              {taux(10, 30, values.minMargin).map(t => <option key={t} value={t}>{t} %</option>)}
             </Select>
           </Field>
         </div>
         <p className="muted" style={{ fontSize: '.82rem' }}>
-          Plage appliquée à tous les médicaments : de {percent(values.minMargin)} à {percent(values.maxMargin)}.
-          Toute valeur hors plage est refusée, à la création comme à la modification d’une fiche.
+          Taux appliqué à tous les médicaments : {percent(values.minMargin)}.
+          Le prix de vente de chaque médicament est recalculé dès l’enregistrement (PV = coût × (1 + taux)).
         </p>
       </Card>
 
       <Card title="Alertes de péremption">
-        <Field label="Horizon d’alerte (jours)"
-          hint="Un lot est signalé « expiration proche » lorsqu’il expire dans ce délai.">
+        {/* 2.7.30 — libellé auto-explicatif : c'est le nombre de jours AVANT la
+            date d'expiration où le lot commence à être signalé. */}
+        <Field label="Alerte de péremption — jours avant l’expiration"
+          hint="Nombre de jours AVANT la date d'expiration où le lot apparaît déjà dans les alertes (« expire bientôt ») et sur le tableau de bord. Exemple : 90 jours ≈ vous êtes prévenu environ 3 mois avant l'expiration, pour avoir le temps de vendre ou de traiter le lot.">
           <Select value={values.expiryDays} onChange={e => maj({ expiryDays: e.target.value })}>
             {[30, 60, 90, 120, 180].map(jours => (
-              <option key={jours} value={jours}>{jours} jours{jours === 90 ? ' (conseillé)' : ''}</option>
+              <option key={jours} value={jours}>
+                {jours} jours{jours === 30 ? ' (≈ 1 mois)' : jours === 60 ? ' (≈ 2 mois)' : jours === 90 ? ' (≈ 3 mois, conseillé)' : jours === 120 ? ' (≈ 4 mois)' : ' (≈ 6 mois)'}
+              </option>
             ))}
           </Select>
         </Field>
-        <Check label="Autoriser exceptionnellement la vente de lots périmés (déconseillé)"
-          checked={values.allowExpiredSale} onChange={e => maj({ allowExpiredSale: e.target.checked })} />
-        <Banner tone="warn" title="Sécurité sanitaire">
-          <span>
-            Laisser cette case décochée : un lot périmé est exclu de la vente et de la proposition FEFO (RG09).
-            Cette autorisation est journalisée dès qu’elle est activée.
-          </span>
-        </Banner>
+        <p className="muted" style={{ fontSize: '.82rem' }}>
+          Un lot périmé n'est JAMAIS vendable : il est exclu de la vente et de la proposition FEFO (RG09).
+          Il reste visible dans les rapports pour être traité (retour, destruction).
+        </p>
       </Card>
 
       <Card title="Enregistrement">
