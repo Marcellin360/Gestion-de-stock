@@ -40,6 +40,8 @@ import { hopital } from '../api/endpoints.js';
 import { useToast } from '../context/ToastContext.jsx';
 import { Badge, Btn, Card, Empty, ErrorBox, Field, Input, Modal, Select, Spinner, Table, Tabs, Textarea } from '../components/ui.jsx';
 import { money, today, integer } from '../utils/format.js';
+// 2.7.84 — unités de vente libres (chaîne de conditionnement) : ml, cm…
+import { libelleQuantiteUnite } from '../utils/unites.js';
 
 // 2.7.45 — JOURS DE SEMAINE par numéro de getDay() (0 = dimanche).
 const NOMS_JOURS = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
@@ -478,9 +480,8 @@ function ModalActivite({ membre, onClose }) {
                       {vente.lignes.map((ligne, index) => (
                         <div key={index}>
                           {ligne.product} — <strong>{ligne.saleQuantity ?? ligne.quantity}</strong>{' '}
-                          {ligne.saleUnit === 'BLISTER' ? (Number(ligne.saleQuantity) > 1 ? 'plaquettes' : 'plaquette')
-                            : ligne.saleUnit === 'UNIT' ? (Number(ligne.saleQuantity) > 1 ? 'comprimés' : 'comprimé')
-                              : (Number(ligne.saleQuantity) > 1 ? 'boîtes' : 'boîte')}
+                          {/* 2.7.84 — unité vendue quelconque (chaîne) + codes legacy. */}
+                          {libelleQuantiteUnite(ligne.saleUnit || 'BOX', Number(ligne.saleQuantity ?? ligne.quantity))}
                         </div>
                       ))}
                     </td>

@@ -2,7 +2,6 @@
 // Point d'assemblage de l'API : routes publiques, puis authentification,
 // puis modules protégés par permission. Chaque écriture est limitée en débit.
 // ============================================================================
-import { VERSION_APPLI } from '../utils/version.js';
 import { Router } from 'express';
 import { asyncHandler } from '../middlewares/asyncHandler.js';
 import { requireAuth } from '../middlewares/authenticate.js';
@@ -17,8 +16,9 @@ import documentRoutes from './documents.routes.js';
 import hopitalRoutes from './hopital.routes.js';
 import reportRoutes from './reports.routes.js';
 import settingsRoutes from './settings.routes.js';
-import { getData, getSalesCalendar, getSalesMonthly, getStockCalendar, getStockFlowMonthly } from '../controllers/dashboard.controller.js';
+import { getData, getSalesCalendar, getSalesMonthly, getStockCalendar, getStockFlowMonthly, getPurchasesMonthly } from '../controllers/dashboard.controller.js';
 import { connect } from '../config/database.js';
+import { VERSION_APPLI } from '../utils/version.js';
 
 export function apiRoutes() {
   const router = Router();
@@ -40,6 +40,12 @@ export function apiRoutes() {
     await connect();
     res.json({ status: 'ok', service: 'pharmastock', time: new Date().toISOString() });
   }));
+  // 2.7.60 — QUEL code répond VRAIMENT ? Route publique sondée par le
+  // garde-fou « pas de PDF » du frontal : un backend plus ancien répond 404,
+  // ce qui désigne la cause racine (ancien processus, mauvais dossier/port).
+  router.get('/version', (req, res) => {
+    res.json({ versionAppli: VERSION_APPLI, marqueurs: ['pdf-documents', 'patients-discharged_on'] });
+  });
   router.use('/auth', authRoutes());
 
   // --- À partir d'ici : session obligatoire ---
@@ -53,6 +59,7 @@ export function apiRoutes() {
   // 2.7.20 — dépôt : calendrier des stock (J/J) et flux entrées/sorties (mois).
   router.get('/data/stock-calendar', asyncHandler(getStockCalendar));
   router.get('/data/stock-flow-monthly', asyncHandler(getStockFlowMonthly));
+  router.get('/data/purchases-monthly', asyncHandler(getPurchasesMonthly));
   router.use('/users', userRoutes());
   router.use(referenceRoutes());
   router.use(stockRoutes());
@@ -61,10 +68,6 @@ export function apiRoutes() {
   router.use(hopitalRoutes());
   router.use(reportRoutes());
   router.use(settingsRoutes());
-
-    router.get('/version', (req, res) => {
-    res.json({ versionAppli: VERSION_APPLI, marqueurs: ['pdf-documents', 'patients-discharged_on'] });
-  });
 
   return router;
 }

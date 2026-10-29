@@ -26,6 +26,21 @@
 //     (motif + quantités corrigées), la demande ATTEND, et seul un
 //     ADMINISTRATEUR valide ou refuse (carte « Corrections de transfert » en
 //     bas). Possible tant qu'aucun lot du transfert n'a bougé depuis.
+//
+// 2.7.94 — demande du dépôt : la PRÉSENTATION accompagne le nom du médicament
+// PARTOUT dans cet historique (« Paracétamol — Boîte de 10 plaquettes »,
+// productLabel 2.7.85) — colonne « Médicament(s) », recherche, et boîte
+// « Détail » (bordereau) — exactement comme à l'historique des réceptions
+// (2.7.85) et dans le formulaire de transfert (2.7.93).
+//
+// 2.7.95 — demande de l'officine (capture du stock) : la présentation
+// s'EMPILE SOUS le nom dans la colonne « Médicament(s) » — nom en GRAS,
+// présentation en petit grisé JUSTE EN DESSOUS (« Alcool » / « 1000 ml ») —
+// EXACTEMENT comme le stock (2.7.88) et l'historique des réceptions (2.7.86) ;
+// finie la forme sur une seule ligne « Nom — Présentation ». La boîte
+// « Détail » (bordereau) adopte la même disposition. La recherche conserve
+// productLabel : un produit se retrouve toujours par son nom OU sa
+// présentation (« 1000 ml » retrouve le bon Alcool).
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowRightLeft, Check, Eye, Gavel, Search, SquarePen, XCircle } from 'lucide-react';
 import { stock } from '../api/endpoints.js';
@@ -59,7 +74,10 @@ const formatStock = valeur => {
 };
 
 export default function TransfersPage() {
-  const { documents, refresh, products, productName, lots } = useData();
+  // 2.7.94 — productLabel (nom + présentation) sert à la RECHERCHE ;
+  // 2.7.95 — productName + product servent à l'AFFICHAGE : nom en gras,
+  // présentation empilée juste en dessous (comme le stock, 2.7.88).
+  const { documents, refresh, products, product, productName, productLabel, lots } = useData();
   // 2.7.20 — le profil sert à masquer « Nouveau transfert » côté pharmacie.
   const { can, user } = useAuth();
   const toast = useToast();
@@ -77,19 +95,21 @@ export default function TransfersPage() {
   const [noteDecision, setNoteDecision] = useState('');
   const [busyDecision, setBusyDecision] = useState(false);
   const estAdmin = can(['settings']);
+  // 2.7.102 — la pharmacie consulte ; dépôt et admin proposent les corrections.
+  const peutProposerCorrection = can('transfer') && ['DEPOT', 'ADMIN'].includes(user?.roleCode);
 
   // Toutes les lignes « transfert » des documents récents, les plus récents d'abord.
   const transferts = useMemo(() => documents
     .filter(doc => doc.kind === 'TRANSFER')
     .filter(doc => { if (!recherche.trim()) return true;
-      const produits = (doc.lines || []).map(ligne => productName(ligne.productId)).join(' ');
+      const produits = (doc.lines || []).map(ligne => productLabel(ligne.productId)).join(' ');   // 2.7.94 : la recherche voit aussi la présentation
       return `${doc.reference} ${doc.reason} ${produits}`.toLowerCase().includes(recherche.trim().toLowerCase());
     })
     // 2.7.72 — borne « Du » (incluse) : la date du transfert est à partir de ce jour.
     .filter(doc => (filtres.de ? String(doc.date).slice(0, 10) >= filtres.de : true))
     // 2.7.72 — borne « Au » (incluse) : la date du transfert s'arrête à ce jour.
     .filter(doc => (filtres.au ? String(doc.date).slice(0, 10) <= filtres.au : true)),
-    [documents, filtres, recherche, productName]);
+    [documents, filtres, recherche, productLabel]);
 
   const valides = transferts.filter(doc => doc.status === 'VALIDATED');
   const valeurTotale = valides.reduce((somme, doc) => somme + Number(doc.costTotal || 0), 0);
@@ -177,22 +197,28 @@ export default function TransfersPage() {
         { label: 'Motif', valeur: transfer.reason || '—' },
         { label: 'Remarque', valeur: transfer.note || '—' }
       ],
-      lignes: (lines || []).map(ligne => ({
-        product: ligne.product,
-        code: ligne.code === '—' ? '' : ligne.code,
-        lot: ligne.lot,
-        expiresOn: ligne.expiresOn,
-        quantity: ligne.quantity,
-        unitCost: ligne.unitCost,
-        value: ligne.value
-      }))
+      lignes: (lines || []).map(ligne => {
+        // 2.7.95 — le NOM seul passe en gras ; la présentation s'empile en
+        // dessous dans la ligne grisée du DocumentModal (comme au stock),
+        // suivie du code produit s'il en existe un.
+        const codeProduit = ligne.code === '—' ? '' : ligne.code;
+        return {
+          product: productName(ligne.productId),
+          code: [product(ligne.productId)?.presentation, codeProduit].filter(Boolean).join(' · '),
+          lot: ligne.lot,
+          expiresOn: ligne.expiresOn,
+          quantity: ligne.quantity,
+          unitCost: ligne.unitCost,
+          value: ligne.value
+        };
+      })
     };
-  }, [detail?.id]);
+  }, [detail?.id, product, productName]);
 
   return (
     <>
       {/* ── CARTE 1 (2.7.72) : titre + période du/au — comme le menu « Stock ». */}
-      <Card title="Historique de transfert"
+      <Card title="Transfert vers pharmacie"
         actions={<>
           <Badge tone="info">Valeur transférée : {money(valeurTotale)}</Badge>
           {/* 2.7.20 — le seed donne la permission 'transfer' à la pharmacie aussi,
@@ -268,7 +294,15 @@ export default function TransfersPage() {
                   <td className="nowrap">{dateTime(transfert.date)}</td>
                   <td className="wrap">
                     {lignes.map((ligne, i) => (
-                      <div key={i}><strong>{productName(ligne.productId)}</strong></div>
+                      // 2.7.95 — comme le stock (2.7.88) : nom en gras,
+                      // présentation JUSTE EN DESSOUS en petit grisé
+                      // (« Alcool » sur une ligne, « 1000 ml » dessous).
+                      <div key={i}>
+                        <strong>{productName(ligne.productId)}</strong>
+                        {product(ligne.productId)?.presentation
+                          ? <div className="muted" style={{ fontSize: '.78rem' }}>{product(ligne.productId).presentation}</div>
+                          : null}
+                      </div>
                     ))}
                     {lignes.length === 0 ? <span className="muted">—</span> : null}
                   </td>
@@ -295,7 +329,7 @@ export default function TransfersPage() {
                       {/* ③ 2.7.79 — « Modifier » (crayon BLEU) : proposition de
                           correction ; grisé-remplacé par un badge tant qu'une
                           demande est déjà en attente pour ce transfert. */}
-                      {transfert.status === 'VALIDATED' && can('transfer') ? (
+                      {transfert.status === 'VALIDATED' && peutProposerCorrection ? (
                         enAttenteDe.has(transfert.id) ? (
                           <Badge tone="warn" title={`Correction ${enAttenteDe.get(transfert.id).reference} en attente de validation par l’administrateur`}>
                             correction en attente
@@ -323,7 +357,7 @@ export default function TransfersPage() {
           Le stock du dépôt diminue et celui de la pharmacie augmente en une seule opération, tracée dans les
           mouvements de stock. Un transfert annulé remet les quantités dans le dépôt. « Détail » affiche le
           bordereau dans une fenêtre — ses boutons « Télécharger » et « Imprimer » produisent le PDF.
-          « Modifier » envoie une correction à l’administrateur : le stock ne change qu’après sa validation (2.7.79).
+          {peutProposerCorrection ? ' « Modifier » envoie une correction à l’administrateur : le stock ne change qu’après sa validation (2.7.79).' : null}
         </p>
       </Card>
 

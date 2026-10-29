@@ -24,7 +24,7 @@
 // prix, il déplace la marchandise). La référence du transfert ne change pas.
 // ============================================================================
 import { Op } from 'sequelize';
-import { Transfer, TransferLine, TransferCorrection, Lot, Product, Movement, User } from '../models/index.js';
+import { Transfer, TransferLine, TransferCorrection, Lot, Product, Movement, MovementSuperseded, User } from '../models/index.js';
 import { D, money } from '../utils/money.js';
 import { ensure } from '../utils/errors.js';
 import { reference as makeReference } from '../utils/ids.js';
@@ -260,6 +260,14 @@ export async function deciderCorrectionTransfert(id, { decision, note }, user, t
   // 1) « Défaire » SANS SUPPRIMER L'HISTOIRE : contre-mouvements CANCEL de
   //    l'ancienne version (le dépôt retrouve ses quantités, la pharmacie les
   //    rend) — le journal des mouvements reste immuable (RG19).
+  // 2.7.91/2.7.92 — REGISTRE NET (« safidy A », choix du dépôt) : la version
+  //    REMPLACÉE du transfert sera marquée « superseded » juste après les
+  //    contre-mouvements CANCEL ci-dessous (UN SEUL insert, voir plus bas) —
+  //    elle ne compte plus dans les colonnes Entrées/Sorties/Stock final des
+  //    fiches de stock (Entrées = réceptions réelles, Sorties = départs nets).
+  //    La ligne RESTE en base : le journal « Mouvements » et l'audit la
+  //    montrent toujours ; seul le registre lit chaque document à sa
+  //    version FINALE, comptée À LA DATE DU TRANSFERT (documentDate).
   const defaire = anciennesLignes.flatMap(ligne => ([
     { productId: ligne.productId, lotId: ligne.fromLotId, location: from, quantity: Number(ligne.quantity), unitCost: ligne.unitCost },
     { productId: ligne.productId, lotId: ligne.toLotId, location: to, quantity: -Number(ligne.quantity), unitCost: ligne.unitCost }
@@ -269,6 +277,23 @@ export async function deciderCorrectionTransfert(id, { decision, note }, user, t
     reason: `Correction ${correction.reference} : version précédente du transfert ${transfer.reference} remplacée`,
     lines: defaire
   }, transaction);
+  // 2.7.91/2.7.92 — TOUTES les écritures supplantées du document (versions
+  // REMPLACÉES du transfert ET contre-mouvements CANCEL qui viennent d'être
+  // créés) sont marquées « superseded » : sinon « Entrées » gonflerait du
+  // retour d'annulation — c'était le défaut signalé par le dépôt (50 + 30).
+  // ⚠ 2.7.92 — la marque N'EST PLUS un UPDATE des mouvements : le trigger
+  // « movements_immutable » (RG19, sql/001) l'interdit et a fait échouer la
+  // migration 1re mouture. Elle vit dans la table SÉPARÉE
+  // « movement_superseded » (INSERT only, ignoreDuplicates → rejouable) :
+  // le journal n'est jamais modifié ni effacé.
+  const mvtSupplantes = await Movement.findAll({
+    where: { documentType: 'TRANSFER', documentId: transfer.id },
+    attributes: ['id'], transaction
+  });
+  await MovementSuperseded.bulkCreate(
+    mvtSupplantes.map(mvt => ({ movementId: mvt.id })),
+    { transaction, ignoreDuplicates: true }
+  );
   await TransferLine.destroy({ where: { transferId: transfer.id }, transaction });
 
   // 2) Refaire avec les QUANTITÉS CORRIGÉES : mêmes lots d'origine (qualifiés
@@ -299,13 +324,16 @@ export async function deciderCorrectionTransfert(id, { decision, note }, user, t
   }
 
   const motif = `Transfert ${transfer.reference} de ${LOCATION_LABELS[from]} vers ${LOCATION_LABELS[to]} — ${payload.transferReason.trim()} (corrigé par ${correction.reference})`;
+  // 2.7.91 — la version CORRIGÉE est écrite À LA DATE DU TRANSFERT
+  // (`documentDate`) : la fiche de stock d'une période passée montre la valeur
+  // finale (« safidy A »), pas une écriture injectée au jour de la décision.
   await applyMovements({
     documentType: 'TRANSFER', documentId: transfer.id, userId: user.id,
-    kind: 'TRANSFER_OUT', reason: motif, lines: sorties
+    kind: 'TRANSFER_OUT', reason: motif, lines: sorties, documentDate: transfer.createdAt
   }, transaction);
   await applyMovements({
     documentType: 'TRANSFER', documentId: transfer.id, userId: user.id,
-    kind: 'TRANSFER_IN', reason: motif, lines: entrees
+    kind: 'TRANSFER_IN', reason: motif, lines: entrees, documentDate: transfer.createdAt
   }, transaction);
 
   // 3) En-tête corrigé : motif, remarque et valeur transférée.

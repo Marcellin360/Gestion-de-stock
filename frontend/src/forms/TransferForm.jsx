@@ -14,9 +14,10 @@
 // comptoir écoule toujours ce qui expire le plus tôt.
 //
 // Choix du lot — deux façons, exprès :
-//   • la RECHERCHE : on tape quelques lettres (nom, code interne ou n° de lot) et
-//     la liste des lots du dépôt qui correspondent apparaît juste en dessous ;
-//     un clic (ou la touche Entrée) sélectionne le lot ;
+//   • la RECHERCHE : on tape quelques lettres (nom, présentation, forme, code
+//     interne ou n° de lot) et la liste des lots du dépôt qui correspondent
+//     apparaît juste en dessous ; un clic (ou la touche Entrée) sélectionne le
+//     lot ;
 //   • la LISTE DÉROULANTE : elle reste disponible pour ceux qui préfèrent voir
 //     tous les lots du dépôt d'un seul coup.
 //
@@ -28,6 +29,15 @@
 //   de remarque (« Ex. : besoin du week-end… ») sont RETIRÉS — et le bouton
 //   icône « Retirer » de chaque ligne passe en ROUGE plein. La mécanique
 //   (FEFO, recherche, liste, envoi) ne change pas.
+//
+// 2.7.93 — AFFICHAGE PAR PRÉSENTATION (demande du dépôt) : dans la colonne
+//   « Médicament / lot du dépôt », ce qui identifie d'abord chaque choix est
+//   le MÉDICAMENT avec sa PRÉSENTATION — « Alcool médical — Flacon 250 ml »
+//   (productLabel du DataContext, 2.7.85), comme au Catalogue et à la
+//   réception (2.7.90). Le n° de lot ne colle PLUS au nom : il descend dans
+//   la ligne discrète en dessous (lot · expiration · code · stock du dépôt ·
+//   aiguillage FEFO). La recherche entend désormais AUSSI la présentation, la
+//   forme galénique et le dosage — plus seulement le nom, le code et le lot.
 import { useMemo, useState } from 'react';
 import { Plus, Trash2, ArrowRightLeft } from 'lucide-react';
 import { stock } from '../api/endpoints.js';
@@ -64,7 +74,9 @@ const ITEM_REFUSE = { ...ITEM, opacity: .62, cursor: 'not-allowed' };
 const ITEM_VIDE = { padding: '8px 10px', fontSize: '.84rem', color: 'var(--slate-500)' };
 
 export default function TransferForm({ onDone, onCancel }) {
-  const { lots, products, productName, settings } = useData();
+  // 2.7.93 — productLabel (nom + présentation, 2.7.85) remplace productName
+  // partout dans cet écran : la présentation identifie la fiche.
+  const { lots, products, productLabel, settings } = useData();
   const toast = useToast();
   // 2.7.78 — la consigne « C'est ce motif qui apparaît dans l'historique du
   // dépôt » est retirée (le champ Motif reste, sans texte d'aide).
@@ -102,7 +114,9 @@ export default function TransferForm({ onDone, onCancel }) {
   }, [lotsDepot, dateJour]);
 
   const codeDe = id => products.find(produit => Number(produit.id) === Number(id))?.code || '—';
-  const etiquetteLot = lot => `${productName(lot.productId)} · lot ${lot.number}`;
+  // 2.7.93 — une ligne choisie s'affiche « Nom — Présentation · lot N° » : la
+  // présentation vient d'abord, le n° de lot suit pour lever toute ambiguïté.
+  const etiquetteLot = lot => `${productLabel(lot.productId)} · lot ${lot.number}`;
 
   /**
    * Pourquoi un lot ne peut PAS partir (chaîne vide = il peut partir).
@@ -130,12 +144,18 @@ export default function TransferForm({ onDone, onCancel }) {
     return '';
   };
 
-  /** Lots du dépôt qui correspondent à ce qui est tapé (nom, code, n° de lot, date). */
+  // 2.7.93 — la recherche entend le NOM, la PRÉSENTATION, la FORME, le DOSAGE,
+  // le CODE, le N° DE LOT et la date d'expiration. « flacon 250 » retrouve donc
+  // directement la bonne fiche, sans connaître le nom exact du médicament.
   const filtrer = terme => {
     const recherche = String(terme || '').trim().toLowerCase();
     if (!recherche) return lotsDepot;
-    return lotsDepot.filter(lot => [productName(lot.productId), codeDe(lot.productId), lot.number, lot.expiresOn]
-      .some(valeur => String(valeur || '').toLowerCase().includes(recherche)));
+    return lotsDepot.filter(lot => {
+      const produit = products.find(item => Number(item.id) === Number(lot.productId));
+      return [produit?.name, produit?.presentation, produit?.form, produit?.dosage,
+        codeDe(lot.productId), lot.number, lot.expiresOn]
+        .some(valeur => String(valeur || '').toLowerCase().includes(recherche));
+    });
   };
 
   const maj = (index, patch) => setLignes(liste => liste.map((ligne, i) => (i === index ? { ...ligne, ...patch } : ligne)));
@@ -224,7 +244,7 @@ export default function TransferForm({ onDone, onCancel }) {
                     <div>
                       <Input
                         value={ligne.recherche}
-                        placeholder="Rechercher : nom, code ou n° de lot…"
+                        placeholder="Rechercher : nom, présentation, code ou n° de lot…"
                         autoComplete="off"
                         aria-label="Rechercher un lot du dépôt"
                         onChange={e => { maj(index, { recherche: e.target.value }); setOuvert(index); setSurbrillance(0); }}
@@ -249,19 +269,20 @@ export default function TransferForm({ onDone, onCancel }) {
                             return (
                               <button type="button" key={item.id} role="option" aria-selected={rang === surbrillance}
                                 title={refus
-                                  ? `${productName(item.productId)} · lot ${item.number} — ce lot n'est PAS proposable : ${refus}`
-                                  : `${productName(item.productId)} · lot ${item.number} · dépôt : ${integer(item.quantity)} en stock — lot FEFO, à envoyer d’abord (le plus proche de la péremption)`}
+                                  ? `${productLabel(item.productId)} · lot ${item.number} — ce lot n'est PAS proposable : ${refus}`
+                                  : `${productLabel(item.productId)} · lot ${item.number} · dépôt : ${integer(item.quantity)} en stock — lot FEFO, à envoyer d’abord (le plus proche de la péremption)`}
                                 style={{ ...(refus ? ITEM_REFUSE : ITEM), background: rang === surbrillance ? 'var(--teal-100)' : 'transparent' }}
                                 onMouseDown={e => e.preventDefault()}
                                 onMouseEnter={() => setSurbrillance(rang)}
                                 onClick={() => choisir(index, item)}>
                                 <span>
-                                  <strong>{productName(item.productId)}</strong> · lot {item.number}
-                                  {item.expiresOn ? ` · exp. ${item.expiresOn}` : ' · sans date'}
-                                  {refus ? '' : <Badge tone="ok">FEFO</Badge>}
+                                  <strong>{productLabel(item.productId)}</strong>
+                                  {refus ? '' : <> <Badge tone="ok">FEFO</Badge></>}
                                 </span>
                                 <span className="muted" style={{ fontSize: '.78rem' }}>
-                                  {codeDe(item.productId)} · dépôt : {integer(item.quantity)} en stock
+                                  lot {item.number}
+                                  {item.expiresOn ? ` · exp. ${item.expiresOn}` : ' · sans date'}
+                                  {' · '}{codeDe(item.productId)} · dépôt : {integer(item.quantity)} en stock
                                   {refus
                                     ? ` — ${refus}`
                                     : ' — c’est ce lot qui part en premier (le plus proche de la péremption).'}

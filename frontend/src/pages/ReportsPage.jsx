@@ -50,6 +50,9 @@ import { reports } from '../api/endpoints.js';
 import { downloadCsv, downloadPdf } from '../api/client.js';
 import { useToast } from '../context/ToastContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
+// 2.7.88 — la colonne « Médicament » du registre affiche la PRÉSENTATION sous
+// le nom (comme au Catalogue) : elle est lue sur la fiche produit via useData.
+import { useData } from '../context/DataContext.jsx';
 import { useRoute } from '../utils/router.js';
 import { Badge, Banner, Btn, Card, Empty, ErrorBox, Input, Spinner } from '../components/ui.jsx';
 import { addDays, integer, monthStart, money, today } from '../utils/format.js';
@@ -82,6 +85,13 @@ const DETAIL = {
 export default function ReportsPage() {
   const toast = useToast();
   const { can, user } = useAuth();
+  // 2.7.88 — fiches produits pour retrouver la présentation (code → fiche).
+  const { products } = useData();
+  // La fiche produit d'une ligne du registre : retrouvée par son CODE (colonne
+  // masquée à l'écran MAIS toujours présente dans les données du rapport,
+  // 2.7.37), avec repli sur le nom pour les données anciennes.
+  const produitDe = ligne => (products || []).find(p => p.code === ligne.Code)
+    || (products || []).find(p => p.name === ligne['Médicament']);
   // Le profil DÉPÔT suit la réserve, les autres profils le comptoir :
   // la fiche affichée est celle de son magasin (pas de sélecteur de rapport).
   // 2.7.21/2.7.22 — l'ADMINISTRATEUR voit les DEUX : « Stock » (menu Dépôt,
@@ -175,9 +185,12 @@ export default function ReportsPage() {
         || Number(ligne['Stock final'] || 0) > 0);
     }
     // 2.7.37 — teboka ② : recherche par nom de médicament (dès 1 caractère).
+    // 2.7.88 — la recherche trouve aussi la présentation (« 250 ml »…).
     const needle = recherche.trim().toLowerCase();
     if (needle) {
-      liste = liste.filter(ligne => String(ligne['Médicament'] || '').toLowerCase().includes(needle));
+      liste = liste.filter(ligne =>
+        String(ligne['Médicament'] || '').toLowerCase().includes(needle)
+        || String(produitDe(ligne)?.presentation || '').toLowerCase().includes(needle));
     }
     return liste;
   }, [resultat, estDepot, recherche]);
@@ -188,6 +201,21 @@ export default function ReportsPage() {
 
   const cellule = (ligne, colonne) => {
     const valeur = ligne[colonne];
+    // 2.7.88 — la colonne « Médicament » du registre se comporte COMME DANS LE
+    // CATALOGUE : le nom en gras, et JUSTE EN DESSOUS la présentation en petit
+    // texte grisé (« Alcool » / « Flacon 500 ml ») — les cinq présentations
+    // d'un même médicament deviennent enfin lisibles l'une de l'autre.
+    if (colonne === 'Médicament') {
+      const prod = produitDe(ligne);
+      return (
+        <td key={colonne} className="wrap">
+          <strong>{valeur}</strong>
+          {prod?.presentation
+            ? <div className="muted" style={{ fontSize: '.78rem' }}>{prod.presentation}</div>
+            : null}
+        </td>
+      );
+    }
     if (colonne.match(/montant|valeur|prix|marge|cout|coût/i)) return <td key={colonne} className="num">{money(valeur)}</td>;
     if (typeof valeur === 'number') return <td key={colonne} className="num">{integer(valeur)}</td>;
     return <td key={colonne} className="wrap">{valeur ?? ''}</td>;

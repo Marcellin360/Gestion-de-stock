@@ -49,6 +49,29 @@
 //   FEFO à côté de « Recalculer le total », l'indication du champ client, le
 //   bandeau « total calculé par le serveur » du pied du panier et la note
 //   « une vente ne se supprime jamais » sous le bouton Valider.
+//
+// Version 2.7.98 — UNITÉ DE VENTE EN LISTE DÉROULANTE (demande du comptoir) :
+//   les chips Boîte / Plaquette / Comprimé de chaque ligne du panier (2.7.12)
+//   disparaissent ; un menu déroulant — comme l'« Unité de gestion » de la
+//   réception — propose les mêmes unités. Logique inchangée : unité de gestion
+//   en premier, puis les descendants de la chaîne de conditionnement (2.7.84),
+//   prix adapté à l'unité choisie (prix propre de la fiche s'il existe, sinon
+//   prorata du prix de l'unité de gestion — calcul serveur), plafond de stock
+//   répliqué dans l'unité choisie.
+//
+// Version 2.7.99 — LISTE NUE (demande du comptoir, avec capture) : les options
+//   du menu ne montrent QUE le nom de l'unité (Boîte, Plaquette, Flacon,
+//   Comprimé…), exactement comme l'« Unité d'achat » de la réception — plus de
+//   suffixe « — 10 par boîte » ni « — conditionnement non renseigné » dans le
+//   texte. Une unité absente de la chaîne reste visible mais non sélectionnable
+//   (la raison n'apparaît qu'en title au survol).
+//
+// Version 2.7.100 — LISTE COMPLÈTE (demande du comptoir, avec capture) : le
+//   menu montre TOUTES les unités de la réception (13 choix : boîte, plaquette,
+//   flacon, comprimé, ampoule, rouleau, carton, sachet, pièce, paire, tube, ml,
+//   cm), comme l'« Unité de gestion » du dépôt — et non plus seulement les 3
+//   codes historiques ni les seules unités de la chaîne. Une unité absente de
+//   la chaîne du médicament reste visible mais grisée, raison en title.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, Trash2, Printer, Check, RefreshCw, Plus, Minus, ShoppingCart, Hospital, Pill, Droplets, ChevronRight, FileDown } from 'lucide-react';
 import { stock, hopital } from '../api/endpoints.js';
@@ -58,19 +81,35 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { Badge, Banner, Btn, Card, Empty, ErrorBox, Field, Input, Select, Textarea } from '../components/ui.jsx';
 import { money, integer, today } from '../utils/format.js';
+// 2.7.84 — chaîne de conditionnement (« 1 carton = 100 boîtes », « 1 flacon =
+// 250 ml »…) : TOUTE unité sous l'unité de gestion est vendable au comptoir.
+import {
+  parserConditionnement, facteurEntre, libelleUnite, pluraliseUnite,
+  saleUnitCanonique, unitesVendables
+} from '../utils/unites.js';
 
 // Unités vendues au comptoir (contrat backend : BOX / BLISTER / UNIT).
+// 2.7.84 — ces trois codes historiques restent le repli des fiches SANS
+// chaîne mémorisée ; les fiches avec chaîne proposent leurs propres unités
+// (boîte, plaquette, comprimé, flacon, ml, cm… — voir unitesVendables).
 const UNITES = [
   { code: 'BOX', label: 'Boîte', pluriel: 'boîtes' },
   { code: 'BLISTER', label: 'Plaquette', pluriel: 'plaquettes' },
   { code: 'UNIT', label: 'Comprimé', pluriel: 'comprimés' }
 ];
-const UNITE_LABEL = code => UNITES.find(u => u.code === code)?.label || 'Boîte';
-const UNITE_PLURIEL = code => UNITES.find(u => u.code === code)?.pluriel || 'boîtes';
+const UNITE_LABEL = code => UNITES.find(u => u.code === code)?.label || libelleUnite(code);
+const UNITE_PLURIEL = code => UNITES.find(u => u.code === code)?.pluriel || pluraliseUnite(String(code || 'boîte').toLowerCase(), 2);
 
-/** Nombre d'unités choisies dans 1 boîte (unité de gestion) pour ce médicament. */
+/** Nombre d'unités choisies dans 1 unité de gestion pour ce médicament. */
 const facteurUnite = (product, saleUnit) => {
   if (!product) return 1;
+  // 2.7.84 — chaîne mémorisée : le facteur se calcule dans la chaîne.
+  if (parserConditionnement(product).length) {
+    const gestion = String(product.unit || 'boîte').toLowerCase();
+    const cible = saleUnitCanonique(product, saleUnit || 'BOX');
+    if (cible === gestion) return 1;
+    return facteurEntre(parserConditionnement(product), gestion, cible) || 0;
+  }
   const plaquettes = Number(product.blistersPerBox || 0);
   const comprimes = Number(product.unitsPerBlister || 0);
   if (saleUnit === 'BLISTER') return plaquettes;
@@ -232,7 +271,15 @@ export default function SalesPage() {
   // Ajout d'une ligne : la quantité est plafonnée au stock vendable du comptoir,
   // exprimé dans l'unité choisie pour cette ligne (2.7.12).
   // ---------------------------------------------------------------------------
-  const ajouter = (productId, nombre = 1, saleUnit = 'BOX') => {
+  const ajouter = (productId, nombre = 1, saleUnit) => {
+    // 2.7.84 — sans unité demandée, la ligne démarre dans l'unité de gestion
+    // du médicament (boîte, flacon, rouleau…), pas forcément « boîte ».
+    if (!saleUnit) {
+      const produitAjoute = product(productId);
+      saleUnit = parserConditionnement(produitAjoute).length
+        ? String(produitAjoute.unit || 'boîte').toLowerCase()
+        : 'BOX';
+    }
     const maximum = maximumDe(productId, saleUnit);
     const actuelle = panier.find(ligne => memeLigne(ligne, productId, saleUnit))?.quantity || 0;
     if (maximum <= 0) {
@@ -257,14 +304,18 @@ export default function SalesPage() {
     });
   };
 
-  // Changer l'unité d'une ligne du panier : boîte ↔ plaquette ↔ comprimé.
+  // Changer l'unité d'une ligne du panier : boîte ↔ plaquette ↔ comprimé ↔ ml…
   // La quantité tapée est simplement re-plafonnée au maximum de la nouvelle unité.
   const changerUnite = (ligneCible, nouvelleUnite) => {
     const produit = product(ligneCible.productId);
     const facteur = facteurUnite(produit, nouvelleUnite);
     if (facteur < 1) {
       setAvertissement(`« ${productName(ligneCible.productId)} » n’a pas de conditionnement par `
-        + `${UNITE_LABEL(nouvelleUnite).toLowerCase()} (fiche médicament → Modifier).`);
+        + `${UNITE_LABEL(nouvelleUnite).toLowerCase()} (`
+        + (parserConditionnement(produit).length
+          ? 'réglé à la réception'
+          : 'fiche médicament → Modifier')
+        + ').');
       return;
     }
     setAvertissement(null);
@@ -450,7 +501,7 @@ export default function SalesPage() {
               <Banner tone="info" title="Aucun médicament vendable au comptoir">
                 {term.trim()
                   ? `Aucun médicament vendable ne correspond à « ${term.trim()} » — essayez un autre mot.`
-                  : 'Aucun lot vendable : les marchandises restées au dépôt doivent d’abord être transférées (écran « Historique de transfert » → « Nouveau transfert »).'}
+                  : 'Aucun lot vendable : les marchandises restées au dépôt doivent d’abord être transférées (écran « Transfert vers pharmacie » → « Nouveau transfert »).'}
               </Banner>
             )}
             {/* 2.7.55 — la note FEFO affichée ici a été retirée (redondante) ; */}
@@ -566,26 +617,39 @@ export default function SalesPage() {
                       <span className="vt-prod-ico" aria-hidden="true"><Icone size={16} /></span>
                       <div className="vt-line__desc">
                         <strong className="vt-line__name">{productName(ligne.productId)}</strong>
-                        {/* 2.7.12 — choix Boîte / Plaquette / Comprimé par ligne.
-                            Une sous-unité sans conditionnement (0 dans la fiche)
-                            est proposée mais grisée avec une explication. */}
-                        <div className="vt-unites" role="group" aria-label="Unité vendue">
-                          {UNITES.map(unite => {
-                            const facteurPossible = facteurUnite(produit, unite.code);
-                            const desactive = unite.code !== 'BOX' && facteurPossible < 1;
+                        {/* 2.7.98 — LISTE DÉROULANTE d'unité de vente (demande du
+                            comptoir) : les chips Boîte / Plaquette / Comprimé
+                            disparaissent ; un menu déroulant — comme l'« Unité
+                            de gestion » de la réception — propose les mêmes
+                            unités (unitesVendables : gestion d'abord, puis les
+                            descendants de la chaîne). Une unité absente de la
+                            chaîne reste visible mais désactivée (raison en
+                            title). 2.7.99 — options NUES : le nom de l'unité
+                            seul, sans facteur ni mention dans le texte. Le prix
+                            suit toujours l'unité choisie (devis serveur). */}
+                        <select aria-label="Unité de vente"
+                          value={ligne.saleUnit}
+                          onChange={e => changerUnite(ligne, e.target.value)}
+                          title={`Unité de vente — le prix s’adapte automatiquement à l’unité choisie${facteur > 1 ? ` (${integer(facteur)} ${UNITE_PLURIEL(ligne.saleUnit)} par ${produit?.unit || 'boîte'})` : ''}`}
+                          style={{ width: 'auto', minWidth: 120, minHeight: 26, padding: '2px 26px 2px 9px', fontSize: '.75rem', fontWeight: 600, borderRadius: 8 }}>
+                          {unitesVendables(produit).map(unite => {
+                            const chaine = parserConditionnement(produit).length > 0;
+                            // 2.7.100 — la liste montre les 13 unités (dépôt) ;
+                            // `vendable` vient de unites.js (chaîne présente ou
+                            // non). Option NUE (2.7.99) : le nom de l'unité seul
+                            // dans le texte ; la raison d'une option grisée ne
+                            // vit qu'en title.
+                            const desactive = !unite.vendable;
                             return (
-                              <Btn key={unite.code} size="sm"
-                                variant={ligne.saleUnit === unite.code ? 'primary' : 'ghost'}
-                                disabled={desactive}
-                                title={desactive
-                                  ? 'Conditionnement non renseigné dans la fiche médicament'
-                                  : `${UNITE_LABEL(unite.code)}${facteur > 1 && ligne.saleUnit === unite.code ? ` · ${facteur}/boîte` : ''}`}
-                                onClick={() => changerUnite(ligne, unite.code)}>
+                              <option key={unite.code} value={unite.code} disabled={desactive}
+                                title={desactive ? (chaine
+                                  ? 'Unité absente de la chaîne réglée à la réception'
+                                  : 'Conditionnement non renseigné dans la fiche médicament') : undefined}>
                                 {unite.label}
-                              </Btn>
+                              </option>
                             );
                           })}
-                        </div>
+                        </select>
                         <small className="muted vt-line__max">maximum vendable : {integer(maximum)} {UNITE_PLURIEL(ligne.saleUnit)}</small>
                       </div>
                     </div>
@@ -636,7 +700,10 @@ export default function SalesPage() {
                           <tr key={index}>
                             <td className="wrap">
                               {ligne.product || '—'}
+                              {/* 2.7.84 — badge affiché dès que l'unité vendue
+                                  n'est PAS l'unité de gestion du produit. */}
                               {ligne.saleUnit && ligne.saleUnit !== 'BOX'
+                                && ligne.saleUnit !== String(product(ligne.productId)?.unit || '').toLowerCase()
                                 ? <Badge tone="info" style={{ marginLeft: 6 }}>{UNITE_LABEL(ligne.saleUnit)}</Badge> : null}
                             </td>
                             <td>{ligne.expiresOn ? new Date(ligne.expiresOn).toLocaleDateString('fr-FR') : 'non daté'}</td>

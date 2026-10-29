@@ -39,7 +39,9 @@ const ETATS_CORRECTION = {
 };
 
 export default function ReceiptsPage() {
-  const { documents, productName, supplierName, lotNumber, refresh } = useData();
+  // 2.7.85 — productLabel = nom + présentation (« Alcool médical — Flacon 250 ml »)
+  // 2.7.86 — product : présentation empilée SOUS le nom
+  const { documents, product, productName, productLabel, supplierName, lotNumber, refresh } = useData();
   const { can } = useAuth();
   const toast = useToast();
   const [creation, setCreation] = useState(false);
@@ -64,7 +66,7 @@ export default function ReceiptsPage() {
     .filter(doc => doc.kind === 'RECEIPT')
     .filter(doc => {
       if (!recherche) return true;
-      const produits = (doc.lines || []).map(ligne => productName(ligne.productId)).join(' ');
+      const produits = (doc.lines || []).map(ligne => productLabel(ligne.productId)).join(' ');   // 2.7.85 : la recherche voit aussi la présentation
       const cible = `${doc.reference} ${supplierName(doc.supplierId)} ${produits} ${dateTime(doc.date)}`.toLowerCase();
       return cible.includes(recherche.toLowerCase());
     })
@@ -94,7 +96,7 @@ export default function ReceiptsPage() {
         { label: 'Remarque', valeur: doc.note || '—' }
       ],
       lignes: (doc.lines || []).map(ligne => ({
-        product: productName(ligne.productId),
+        product: productLabel(ligne.productId),   // 2.7.85 — présentation affichée
         code: ligne.code || '',
         lot: ligne.number || lotNumber(ligne.lotId),
         expiresOn: ligne.expiresOn,
@@ -221,7 +223,13 @@ export default function ReceiptsPage() {
                   <td className="nowrap">{dateTime(reception.date)}</td>
                   <td className="wrap">
                     {lignes.map((ligne, i) => (
-                      <div key={i}><strong>{productName(ligne.productId)}</strong></div>
+                      <div key={i}>
+                        {/* 2.7.86 — nom en gras, présentation JUSTE EN DESSOUS */}
+                        <strong>{productName(ligne.productId)}</strong>
+                        {product(ligne.productId)?.presentation
+                          ? <div className="muted" style={{ fontSize: '.8rem' }}>{product(ligne.productId).presentation}</div>
+                          : null}
+                      </div>
                     ))}
                     {lignes.length === 0 ? <span className="muted">—</span> : null}
                   </td>
@@ -388,7 +396,13 @@ export default function ReceiptsPage() {
                 <tbody>
                   {(trancher.actuelles || []).map((ligne, i) => (
                     <tr key={i}>
-                      <td className="wrap">{productName(ligne.productId)}</td>
+                      <td className="wrap">
+                        {/* 2.7.86 — nom en gras, présentation JUSTE EN DESSOUS */}
+                        <strong>{productName(ligne.productId)}</strong>
+                        {product(ligne.productId)?.presentation
+                          ? <div className="muted" style={{ fontSize: '.8rem' }}>{product(ligne.productId).presentation}</div>
+                          : null}
+                      </td>
                       <td className="wrap">{ligne.number}</td>
                       <td className="num">{integer(ligne.quantity)}</td>
                       <td className="num">{money(ligne.purchasePrice)}</td>
@@ -407,7 +421,13 @@ export default function ReceiptsPage() {
                 <tbody>
                   {(trancher.payload?.lines || []).map((ligne, i) => (
                     <tr key={i}>
-                      <td className="wrap">{productName(ligne.productId)}</td>
+                      <td className="wrap">
+                        {/* 2.7.86 — nom en gras, présentation JUSTE EN DESSOUS */}
+                        <strong>{productName(ligne.productId)}</strong>
+                        {product(ligne.productId)?.presentation
+                          ? <div className="muted" style={{ fontSize: '.8rem' }}>{product(ligne.productId).presentation}</div>
+                          : null}
+                      </td>
                       <td className="wrap">{ligne.number}</td>
                       <td className="num">{integer(ligne.quantity)}</td>
                       <td className="num">{money(ligne.purchasePrice)}</td>

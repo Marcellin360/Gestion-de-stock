@@ -17,6 +17,11 @@ export async function detail(req, res) {
 }
 
 export async function proposer(req, res) {
+  // 2.7.102 — le pharmacien consulte, mais ne propose pas de correction.
+  const role = req.user?.role?.code || req.user?.roleCode;
+  if (!['DEPOT', 'ADMIN'].includes(role)) {
+    return res.status(403).json({ message: 'La correction d’un transfert est réservée au dépôt et à l’administrateur.' });
+  }
   const correction = await write(transaction => proposerCorrectionTransfert(Number(req.params.id), req.body, req.user, transaction));
   res.status(201).json(correction);
 }

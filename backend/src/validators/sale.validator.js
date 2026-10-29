@@ -2,17 +2,19 @@ import { z } from 'zod';
 import { identifier, quantity, amount, text, requestKey } from './common.validator.js';
 
 // 2.7.12 — vente au détail : chaque ligne porte l'unité choisie à la caisse.
-//   BOX     = boîte entière (unité de gestion du stock) ;
-//   BLISTER = plaquette (boîte 1 = plaquettes N, réglé dans la fiche médicament) ;
-//   UNIT    = vongany, la plus petite pièce (plaquette 1 = vongany M).
-// « quantity » = le nombre tapé par le vendeur DANS L'UNITÉ CHOISIE
-// (ex. 3 plaquettes → le serveur convertit en équivalent-boîte pour le stock).
-export const SALE_UNITS = ['BOX', 'BLISTER', 'UNIT'];
+//   BOX     = unité de gestion entière (boîte, flacon, rouleau…) ;
+//   BLISTER = plaquette ; UNIT = vongany (comprimé).
+// 2.7.84 — l'unité n'est plus LIMITÉE à ces trois codes : toute unité de la
+// chaîne de conditionnement du médicament est vendable (« ml », « cm »,
+// « plaquette », « comprimé »…). C'est le SERVEUR qui vérifie que l'unité
+// existe pour CE produit (utils/conditionnement.js) — ici on contrôle juste
+// la forme du texte.
+export const SALE_UNITS = ['BOX', 'BLISTER', 'UNIT'];   // codes historiques, toujours acceptés
 
 const lines = z.array(z.object({
   productId: identifier,
   quantity,
-  saleUnit: z.enum(SALE_UNITS, { message: 'Unité de vente inconnue : choisir boîte, plaquette ou vongany' })
+  saleUnit: z.string().trim().min(1, 'Unité de vente requise.').max(40, 'Unité de vente trop longue')
     .default('BOX')
 }).strict()).min(1, 'Ajouter au moins un médicament').max(100)
   // Une même paire médicament + unité n'apparaît qu'une fois (le client peut

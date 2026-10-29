@@ -36,14 +36,20 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { Badge, Btn, Card, Empty, ErrorBox, Field, Input, Modal, Select, StatusBadge, Textarea } from './ui.jsx';
 import { dateTime, integer, money, today, addDays } from '../utils/format.js';
+// 2.7.84 — unités de vente libres (chaîne de conditionnement) : ml, cm…
+import { libelleQuantiteUnite } from '../utils/unites.js';
 
 const STATUS_LABELS = { VALIDATED: 'Validée', CANCELLED: 'Annulée', DRAFT: 'En cours', ABANDONED: 'Abandonnée' };
 // 2.7.12 — vente au détail : affiche la quantité DANS L'UNITÉ vendue.
+// 2.7.84 — l'unité vendue peut être n'importe quelle unité de la chaîne de
+// conditionnement (« plaquette », « comprimé », « ml », « cm »…) : le pluriel
+// passe par l'utilitaire partagé (utils/unites.js) ; les codes historiques
+// BOX / BLISTER / UNIT des ventes passées gardent leurs libellés.
 const UNITE_LABELS = { BOX: 'boîte', BLISTER: 'plaquette', UNIT: 'comprimé' };
 const quantiteVendue = line => {
   const nombre = Number(line.saleQuantity ?? line.quantity);
-  const unite = UNITE_LABELS[line.saleUnit || 'BOX'] || 'boîte';
-  return `${Number.isInteger(nombre) ? integer(nombre) : nombre.toLocaleString('fr-FR')} ${nombre > 1 ? `${unite}s` : unite}`;
+  return `${Number.isInteger(nombre) ? integer(nombre) : nombre.toLocaleString('fr-FR')} `
+    + libelleQuantiteUnite(line.saleUnit || 'BOX', nombre);
 };
 // 2.7.65 — message du contournement navigateur (protection web locale).
 export const MESSAGE_PDF_NAVIGATEUR = 'Téléchargement lancé par le NAVIGATEUR (la protection web locale bloquait le fetch) : '

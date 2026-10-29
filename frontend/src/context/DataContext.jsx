@@ -87,6 +87,14 @@ export function DataProvider({ children }) {
       settings: data?.settings || {},
       stats2: data?.stats || {},
       productName: id => byId(products, id)?.name || `Médicament #${id}`,
+      // 2.7.85 — nom + présentation (« Alcool médical — Flacon 250 ml ») :
+      // à la réception comme au stock, chaque présentation est une fiche à
+      // part entière (2.7.84) et doit donc être LISIBLE partout.
+      productLabel: id => {
+        const trouve = byId(products, id);
+        if (!trouve) return `Médicament #${id}`;
+        return trouve.presentation ? `${trouve.name} — ${trouve.presentation}` : trouve.name;
+      },
       product: id => byId(products, id),
       lot: id => byId(lots, id),
       // Numéro de lot lisible (bons de réception, transferts, détail des documents).

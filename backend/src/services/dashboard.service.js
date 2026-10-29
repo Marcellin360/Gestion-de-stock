@@ -373,3 +373,20 @@ export async function stockFlowMonthly(transaction) {
   );
   return lignes;
 }
+
+// 2.7.101 — valeur d'achat des réceptions validées, non les paiements.
+export async function purchasesMonthly(transaction) {
+  const [year, month] = today().slice(0, 7).split('-').map(Number);
+  const first = year * 12 + month - 1 - 11;
+  const debut = new Date(`${Math.floor(first / 12)}-${String(first % 12 + 1).padStart(2, '0')}-01T00:00:00+03:00`);
+  const [months] = await sequelize.query(
+    `SELECT to_char(created_at AT TIME ZONE :fuseau, 'YYYY-MM') AS "month",
+            COUNT(*)::int AS "count",
+            ROUND(COALESCE(SUM(cost_total), 0), 2)::float8 AS "total"
+     FROM receipts
+     WHERE status = 'VALIDATED' AND created_at >= :debut
+     GROUP BY 1 ORDER BY 1`,
+    { replacements: { debut, fuseau: config.timezone }, transaction }
+  );
+  return months;
+}

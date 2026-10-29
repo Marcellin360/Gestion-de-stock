@@ -22,13 +22,22 @@
 //   Prescrit par / Date de délivrance / Délivré par, tableau à filets horizontaux
 //   seuls, cases de signature, ligne de coupe ✂. Version PDF téléchargeable
 //   dans documentsPdf.js.
+//
+//   2.7.59 — A5 **PAYSAGE** : les deux exemplaires sont CÔTE À CÔTE sur la
+//   même feuille (patient à gauche, pharmacie à droite), coupés VERTICALEMENT
+//   au milieu ; et l'ordonnance affiche la DATE DE SORTIE de l'hôpital
+//   (« Sorti de l'hôpital le … ») quand elle est gravée (migration 013) —
+//   « apetaka eo amin'ny ordonnance ny date nivoahany hôpital ».
 // ============================================================================
 import { printablePage, formatDateTime, escapeHtml } from '../utils/html.js';
 import { table } from './table.js';
+// 2.7.84 — unités de vente libres (chaîne de conditionnement) : ml, cm…
+import { libelleUnite, pluraliseUnite } from '../utils/conditionnement.js';
 
 const UNITES = { BOX: 'boîte', BLISTER: 'plaquette', UNIT: 'comprimé' };
-const pluriel = texte => (/[eéyi]$/.test(texte)) ? `${texte}s` : texte;
+const pluriel = texte => pluraliseUnite(texte, 2);   // 2.7.84 : pluriels généralisés
 const ROLE_LABELS = { DOCTOR: 'Médecin', MIDWIFE: 'Sage-femme' };
+
 const dateJour = valeur => (valeur ? String(valeur).slice(0, 10).split('-').reverse().join('/') : '—');
 
 const ORDER_CSS = `
@@ -65,7 +74,7 @@ function exemplaire({ sale, lines, pharmacy, patient, prescriber, user, mention 
     { label: 'MÉDICAMENT', render: line => `<strong>${escapeHtml(line.productName)}</strong>` },
     {
       label: 'QUANTITÉ', align: 'right', render: line => {
-        const unite = UNITES[line.saleUnit] || UNITES.BOX;
+        const unite = libelleUnite(line.saleUnit || 'BOX');   // 2.7.84 : legacy + unités brutes
         const nombre = Number(line.saleQuantity ?? line.quantity);
         const libelle = nombre > 1 ? pluriel(unite) : unite;
         return `${escapeHtml(String(Number.isInteger(nombre) ? nombre : nombre.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')))} ${libelle}`;
@@ -96,7 +105,7 @@ function exemplaire({ sale, lines, pharmacy, patient, prescriber, user, mention 
     <div>Patient : <strong>${ordonnanceNula(patient?.name)}</strong>${patient?.service ? ` · ${escapeHtml(patient.service)}` : ''}</div>
     <div>Prescrit par : <strong>${ordonnanceNula(prescriber?.name)}</strong>${rolePrescripteur ? ` (${escapeHtml(rolePrescripteur)})` : ''}</div>
     <div>Date de délivrance : ${escapeHtml(formatDateTime(sale.createdAt))}</div>
-   <div>Délivré par : ${escapeHtml(user?.name || '')}</div>
+    <div>Délivré par : ${escapeHtml(user?.name || '')}</div>
     ${patient?.dischargedOn ? `<div>Sorti de l’hôpital le : <strong>${escapeHtml(dateJour(patient.dischargedOn))}</strong></div>` : ''}
     ${annulee}
   </div>

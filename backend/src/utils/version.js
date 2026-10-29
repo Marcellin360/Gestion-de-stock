@@ -7,4 +7,4 @@
 //   « relancer le backend » ne suffit pas si l'ANCIEN processus est encore
 //   en écoute sur le port (le nouveau refusera avec EADDRINUSE).
 // ============================================================================
-export const VERSION_APPLI = '2.7.83';
+export const VERSION_APPLI = '2.7.104';

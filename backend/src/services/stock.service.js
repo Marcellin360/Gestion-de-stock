@@ -101,8 +101,12 @@ export async function lockLot(lotId, transaction) {
  * stock disponible, écriture au journal immuable et incrément de la version du
  * médicament (détection des saisies concurrentes, notamment pendant l'inventaire).
  * lines : [{ productId, lotId, quantity (signé), unitCost, reason? }]
+ * 2.7.91 — `documentDate` (facultatif) : date D'ÉCRITURE du mouvement. N'est
+ * renseignée que par la correction de transfert validée (« safidy A ») :
+ * la version corrigée est comptée À LA DATE DU TRANSFERT, pas à celle de la
+ * validation — le registre d'une période passée montre la valeur finale).
  */
-export async function applyMovements({ documentType, documentId, userId, kind, reason = '', lines }, transaction) {
+export async function applyMovements({ documentType, documentId, userId, kind, reason = '', lines, documentDate = null }, transaction) {
   const touched = new Map();
   for (const line of lines) {
     const lot = await lockLot(line.lotId, transaction);
@@ -114,7 +118,7 @@ export async function applyMovements({ documentType, documentId, userId, kind, r
       documentType, documentId, productId: line.productId, lotId: lot.id,
       location: line.location ?? lot.location,
       quantity: quantite(line.quantity), unitCost: money(line.unitCost), kind,
-      reason: line.reason ?? reason, userId, createdAt: new Date()
+      reason: line.reason ?? reason, userId, createdAt: documentDate || new Date()
     }, { transaction });
     touched.set(line.productId, (touched.get(line.productId) || 0) + 1);
   }

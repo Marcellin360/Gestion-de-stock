@@ -25,15 +25,17 @@ import {
 import { formatMoney, formatDateTime } from '../utils/html.js';
 // 2.7.79 — « Servi par » saisi à la caisse : lu depuis la note (marqueur).
 import { serviParDe } from '../utils/serviPar.js';
+// 2.7.84 — unités de vente libres (chaîne de conditionnement) : ml, cm…
+import { libelleUnite, pluraliseUnite } from '../utils/conditionnement.js';
 
 const UNITES = { BOX: 'boîte', BLISTER: 'plaquette', UNIT: 'comprimé' };
-const pluriel = valeur => (/[eéyi]$/.test(valeur) ? `${valeur}s` : valeur);
+const pluriel = valeur => pluraliseUnite(valeur, 2);   // 2.7.84 : pluriels généralisés
 const ROLE_LABELS = { DOCTOR: 'Médecin', MIDWIFE: 'Sage-femme' };
 const dateJour = valeur => (valeur ? String(valeur).slice(0, 10).split('-').reverse().join('/') : '—');
 
 const quantiteUnite = ligne => {
   const nombre = Number(ligne.saleQuantity ?? ligne.quantity);
-  const unite = UNITES[ligne.saleUnit] || UNITES.BOX;
+  const unite = libelleUnite(ligne.saleUnit || 'BOX');   // 2.7.84 : legacy + unités brutes
   const entier = Number.isInteger(nombre) ? nombre : nombre.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
   return `${entier} ${nombre > 1 ? pluriel(unite) : unite}`;
 };

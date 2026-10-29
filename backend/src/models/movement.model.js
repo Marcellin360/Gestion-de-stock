@@ -18,6 +18,15 @@ export const attributes = {
     unitCost: {type:DataTypes.DECIMAL(20,6),allowNull:false},
     kind: {type:DataTypes.STRING(30),allowNull:false},
     reason: {type:DataTypes.TEXT,allowNull:false,defaultValue:''},
+    // 2.7.91/2.7.92 — le marquage « superseded » (registre net « safidy A » :
+    // version remplacée par une correction validée, ou écriture + CANCEL d'un
+    // document annulé, qui sortent des colonnes Entrées/Sorties des fiches de
+    // stock) N'EST PAS une colonne ici : le trigger « movements_immutable »
+    // (RG19, sql/001) INTERDIT tout UPDATE de cette table — il a d'ailleurs
+    // fait échouer la première mouture (colonne + UPDATE). La marque vit dans
+    // la table SÉPARÉE « movement_superseded » (insert-only, modèle
+    // movementSuperseded.model.js) : ce journal reste 100 % intact.
+
     userId: {type:DataTypes.INTEGER,allowNull:false},
     createdAt: {type:DataTypes.DATE,allowNull:false,defaultValue:DataTypes.NOW}
 };

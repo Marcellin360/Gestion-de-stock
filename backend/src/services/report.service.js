@@ -113,17 +113,26 @@ export async function buildReport({ type, from, to, supplierId = null, productId
                    * CASE WHEN :cmp = 'CMP' THEN p.cmp ELSE COALESCE(cout.cout, p.cmp) END, 2) AS "Valeur (Ar)"
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
+      /* 2.7.91/2.7.92 — REGISTRE NET (« safidy A », choix du dépôt) :
+         NOT EXISTS movement_superseded retire les écritures REMPLACÉES par
+         une correction validée et les contre-mouvements CANCEL (corrections,
+         annulations tracées). La marque vit en TABLE SÉPARÉE insert-only :
+         le trigger « movements_immutable » (RG19) interdit toute retouche
+         du journal — rien n'est modifié ni effacé, le rapport « Mouvements »
+         et l'audit gardent toutes les lignes ; la fiche lit chaque document
+         à sa version FINALE — ex. transfert 30 corrigé en 20 : Entrées 50
+         (réceptions réelles), Sorties 20 (départ net), Stock final 30. */
       LEFT JOIN (
         SELECT product_id, SUM(quantity) AS qte FROM movements
-        WHERE location = :location AND created_at < :start GROUP BY product_id
+        WHERE location = :location AND NOT EXISTS (SELECT 1 FROM movement_superseded s WHERE s.movement_id = movements.id) AND created_at < :start GROUP BY product_id
       ) avant ON avant.product_id = p.id
       LEFT JOIN (
         SELECT product_id, SUM(quantity) AS qte FROM movements
-        WHERE location = :location AND created_at >= :start AND created_at < :end AND quantity > 0 GROUP BY product_id
+        WHERE location = :location AND NOT EXISTS (SELECT 1 FROM movement_superseded s WHERE s.movement_id = movements.id) AND created_at >= :start AND created_at < :end AND quantity > 0 GROUP BY product_id
       ) entrees ON entrees.product_id = p.id
       LEFT JOIN (
         SELECT product_id, -SUM(quantity) AS qte FROM movements
-        WHERE location = :location AND created_at >= :start AND created_at < :end AND quantity < 0 GROUP BY product_id
+        WHERE location = :location AND NOT EXISTS (SELECT 1 FROM movement_superseded s WHERE s.movement_id = movements.id) AND created_at >= :start AND created_at < :end AND quantity < 0 GROUP BY product_id
       ) sorties ON sorties.product_id = p.id
       LEFT JOIN (
         SELECT product_id,
@@ -158,9 +167,10 @@ export async function buildReport({ type, from, to, supplierId = null, productId
       JOIN users u ON u.id = m.user_id
       LEFT JOIN (
         SELECT SUM(quantity) AS qte FROM movements
-        WHERE location = :location AND product_id = :productId AND created_at < :start
+        WHERE location = :location AND product_id = :productId AND NOT EXISTS (SELECT 1 FROM movement_superseded s WHERE s.movement_id = movements.id) AND created_at < :start
       ) avant ON TRUE
       WHERE m.product_id = :productId AND m.location = :location
+        AND NOT EXISTS (SELECT 1 FROM movement_superseded s WHERE s.movement_id = m.id)   /* 2.7.91/2.7.92 — même registre net que la fiche globale */
         AND m.created_at >= :start AND m.created_at < :end
       ORDER BY m.id ASC`,
 

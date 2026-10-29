@@ -11,7 +11,9 @@ import { Badge, Btn, Card, Empty, ErrorBox, Field, Input, Modal, Select, StatusB
 import { date, daysTo, integer, money, expiryLabel, LOCATION_SHORT } from '../utils/format.js';
 
 export default function LotsPage() {
-  const { lots, products, productName, settings, refresh } = useData();
+  // 2.7.85 — productLabel : nom + présentation, chaque présentation est lisible
+  // 2.7.86 — product : nom + présentation empilés (présentation SOUS le nom)
+  const { lots, products, product, productName, settings, refresh } = useData();
   const { can, user } = useAuth();
   const toast = useToast();
   // Le dépôt ne travaille que sur ses propres lots ; les autres profils peuvent
@@ -87,7 +89,12 @@ export default function LotsPage() {
           <Field label="Médicament">
             <Select value={filtres.produit} onChange={e => setFiltres({ ...filtres, produit: e.target.value })}>
               <option value="">Tous</option>
-              {products.map(product => <option key={product.id} value={product.id}>{product.name}</option>)}
+              {/* 2.7.85 — la présentation distingue les fiches du même nom */}
+              {products.map(product => (
+                <option key={product.id} value={product.id}>
+                  {product.presentation ? `${product.name} — ${product.presentation}` : product.name}
+                </option>
+              ))}
             </Select>
           </Field>
           <Field label="Numéro de lot">
@@ -128,7 +135,13 @@ export default function LotsPage() {
               <tbody>
                 {lignes.map(lot => (
                   <tr key={lot.id}>
-                    <td className="wrap">{productName(lot.productId)}</td>
+                    <td className="wrap">
+                      {/* 2.7.86 — le nom en gras, la présentation JUSTE EN DESSOUS */}
+                      <strong>{productName(lot.productId)}</strong>
+                      {product(lot.productId)?.presentation
+                        ? <div className="muted" style={{ fontSize: '.8rem' }}>{product(lot.productId).presentation}</div>
+                        : null}
+                    </td>
                     <td><Badge tone={lot.location === 'DEPOT' ? 'info' : 'default'}>{(LOCATION_SHORT[lot.location] || '—')}</Badge></td>
                     <td>{lot.receivedOn ? date(lot.receivedOn) : '—'}</td>
                     <td className="num">{integer(lot.quantity)}</td>

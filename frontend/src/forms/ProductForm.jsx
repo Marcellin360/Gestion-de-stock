@@ -28,6 +28,13 @@
 //     l'équipe) ;
 //   • « Renoncer » devient « Retour », bouton ROUGE plein (famille annulation,
 //     comme le « Fermer » des boîtes de dialogue).
+//
+// 2.7.89 — « Présentation » RETIRÉE du formulaire (demande de l'officine) :
+//   elle ne se saisit plus dans le Catalogue — elle se règle À LA RÉCEPTION
+//   (champ « Présentation » de « Nouvelle réception ») et s'affiche
+//   automatiquement dans le catalogue sous le nom du médicament. La valeur
+//   existante de la fiche est CONSERVÉE à l'enregistrement (l'état la garde,
+//   le payload la renvoie telle quelle).
 import { useState } from 'react';
 import { referentials } from '../api/endpoints.js';
 import { Banner, Btn, Check, ErrorBox, Field, Input, Select, Textarea } from '../components/ui.jsx';
@@ -73,11 +80,17 @@ export default function ProductForm({ produit, onDone, onCancel }) {
       // Le serveur complète (code interne + code-barres EAN-13 internes).
       const payload = {
         name: values.name.trim(),
+        // 2.7.89 — la présentation n'est plus saisie dans ce formulaire : elle
+        // vient de la RÉCEPTION et s'affiche automatiquement au catalogue. La
+        // valeur de la fiche est RENVOYÉE telle quelle pour ne jamais l'effacer
+        // lors d'une simple modification de fiche.
         presentation: values.presentation || '',
         categoryId: values.categoryId ? Number(values.categoryId) : null,
-        // 2.7.31 — l'unité n'est plus saisie ici : la valeur existante de la
-        // fiche est renvoyée telle quelle (choisie depuis les réceptions).
-        unit: values.unit || 'boîte',
+        // 2.7.31 — l'unité n'est plus saisie ici. 2.7.90 — fiche NOUVELLE :
+        // unité VIDE — l'écran Stock l'affiche vide (demande du dépôt) et la
+        // PREMIÈRE réception la fixe automatiquement (celle saisie à la
+        // réception). En modification, la valeur existante est conservée.
+        unit: produit ? (values.unit || '') : '',
         minStock: Number(values.minStock || 0),
         maxStock: values.maxStock === '' ? null : Number(values.maxStock),
         note: values.note || '',
@@ -134,9 +147,14 @@ export default function ProductForm({ produit, onDone, onCancel }) {
             {categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}
           </Select>
         </Field>
-        <Field label="Présentation">
-          <Input value={values.presentation} onChange={e => maj({ presentation: e.target.value })} placeholder="Boîte de 20" />
-        </Field>
+        {/* 2.7.89 — « Présentation » RETIRÉE du formulaire (demande de
+            l'officine) : elle ne se saisit plus ICI. Elle vient de la
+            RÉCEPTION (« Nouvelle réception », champ Présentation) et s'affiche
+            automatiquement dans le catalogue (colonne « Médicament » : nom en
+            gras, présentation dessous). La valeur existante de la fiche est
+            CONSERVÉE : elle reste dans l'état et est renvoyée au serveur à
+            l'enregistrement (une modification de la désignation n'efface
+            jamais la présentation reçue). */}
         {/* 2.7.31 — « Unité de gestion » n'est plus ici : elle se choisit
             dans « Nouvelle réception » (boîte, flacon, pièce, plaquette). */}
         <Field label="Seuil d’alerte (stock minimum)" hint="Le stock maximum proposé est 30 fois ce seuil (modifiable)">

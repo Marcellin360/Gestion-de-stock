@@ -29,10 +29,12 @@ import { table } from './table.js';
 // 2.7.79 — « Servi par » SAISI à la caisse : le nom tapé au moment de la vente
 // (cousu en tête de la note, utils/serviPar.js) remplace le compte connecté.
 import { serviParDe } from '../utils/serviPar.js';
+// 2.7.84 — unités de vente libres (chaîne de conditionnement) : ml, cm…
+import { libelleUnite, pluraliseUnite } from '../utils/conditionnement.js';
 
 // Libellés des unités vendues (fiche médicament → conditionnement).
 const UNITES = { BOX: 'boîte', BLISTER: 'plaquette', UNIT: 'comprimé' };
-const pluriel = texte => (/[eéyi]$/.test(texte)) ? `${texte}s` : texte;
+const pluriel = texte => pluraliseUnite(texte, 2);   // 2.7.84 : pluriels généralisés
 
 // 2.7.59 — A5 PAYSAGE (210 × 148 mm) : les deux exemplaires côte à côte,
 // coupés au milieu de la feuille par un trait VERTICAL pointillé.
@@ -72,7 +74,7 @@ function exemplaire({ sale, lines, pharmacy, currency, user, mention }) {
     {
       label: 'QUANTITÉ', align: 'right', render: line => {
         // Les ventes enregistrées avant la 2.7.12 n'ont pas de saleUnit : boîte.
-        const unite = UNITES[line.saleUnit] || UNITES.BOX;
+        const unite = libelleUnite(line.saleUnit || 'BOX');   // 2.7.84 : legacy + unités brutes
         const nombre = Number(line.saleQuantity ?? line.quantity);
         const libelle = nombre > 1 ? pluriel(unite) : unite;
         return `${escapeHtml(String(Number.isInteger(nombre) ? nombre : nombre.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')))} ${libelle}`;

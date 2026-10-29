@@ -20,7 +20,8 @@ export const dashboard = {
   salesMonthly: () => api.get('/data/sales-monthly'),
   // 2.7.20 — dépôt : calendrier des stock (J/J) et flux mensuels entrées/sorties.
   stockCalendar: month => api.get(`/data/stock-calendar?month=${month}`),
-  stockFlowMonthly: () => api.get('/data/stock-flow-monthly')
+  stockFlowMonthly: () => api.get('/data/stock-flow-monthly'),
+  purchasesMonthly: () => api.get('/data/purchases-monthly')
 };
 
 export const referentials = {

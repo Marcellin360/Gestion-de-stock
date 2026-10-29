@@ -14,6 +14,13 @@
 // Les 3 prix sont INDÉPENDANTS (« tsy hitovy ny vidiny ») : le prix d'une
 // plaquette ou d'un comprimé se règle par médicament ; à 0, il est calculé
 // automatiquement AU PRORATA du prix de la boîte au moment de la vente.
+//
+// 2.7.84 — CHAÎNE DE CONDITIONNEMENT GÉNÉRALISÉE : quand la fiche porte un
+// « packaging » (saisi à la réception : carton → boîte → plaquette →
+// comprimé, flacon → ml, rouleau → cm…), TOUTE unité de la chaîne située
+// sous l'unité de gestion est vendable (« ml », « comprimé », « cm »…). Les
+// codes historiques BOX / BLISTER / UNIT restent acceptés (traduits vers
+// l'unité de gestion, « plaquette », « comprimé ») — utils/conditionnement.js.
 // ============================================================================
 import { Sale, SaleLine, Product, Patient, MedicalStaff } from '../models/index.js';
 import { D, money } from '../utils/money.js';
@@ -28,9 +35,22 @@ import { log } from './audit.service.js';
 // 2.7.79 — « Servi par » saisi à la caisse : le nom est cousu en tête de la
 // note de la vente (marqueur reconnaissable), sans colonne nouvelle.
 import { coudreServiPar } from '../utils/serviPar.js';
+// 2.7.84 — chaîne de conditionnement : facteurs, traductions et libellés.
+import {
+  chaineEffective, facteurVers, saleUnitCanonique, libelleUnite
+} from '../utils/conditionnement.js';
 
-/** Nombre de sous-unités contenues dans 1 boîte (unité de gestion). */
+/** Nombre de sous-unités contenues dans 1 unité de gestion (boîte, flacon…). */
 export function saleUnitFactor(product, saleUnit) {
+  // 2.7.84 — chaîne mémorisée : le facteur se calcule dans la chaîne.
+  const chaine = chaineEffective(product);
+  if (chaine.length && product.packaging) {
+    const unite = saleUnitCanonique(product, saleUnit);
+    const gestion = String(product.unit || 'boîte').toLowerCase();
+    if (unite === gestion) return 1;
+    return facteurVers(chaine, gestion, unite) ?? 0;
+  }
+  // Comportement 2.7.12 inchangé pour les fiches sans chaîne.
   if (saleUnit === 'BLISTER') return Number(product.blistersPerBox) || 0;
   if (saleUnit === 'UNIT') return (Number(product.blistersPerBox) || 0) * (Number(product.unitsPerBlister) || 0);
   return 1;
@@ -43,8 +63,21 @@ export const SALE_UNIT_LABELS = { BOX: 'boîte', BLISTER: 'plaquette', UNIT: 'co
  * Prix PAR UNITÉ de vente demandée (RG21 : 3 prix indépendants).
  * Prix détaillé non renseigné (= 0) sur la fiche → calcul au prorata du prix
  * de la boîte appliqué au comptoir (jamais de prix différent de l'étiquette).
+ * 2.7.84 — les prix indépendants restent ceux de « plaquette » et « comprimé »
+ * (fiche « Modifier ») ; toute autre unité de la chaîne est tarifée AU PRORATA
+ * du prix de l'unité de gestion (« ml », « cm », « carton »…).
  */
 export function priceForUnit(product, saleUnit, boxPrice) {
+  // 2.7.84 — chaîne généralisée (le nom canonique est déjà résolu).
+  if (chaineEffective(product).length && product.packaging) {
+    if (saleUnit === 'plaquette' && D(product.pricePerBlister).gt(0)) return money(product.pricePerBlister);
+    if (saleUnit === 'comprimé' && D(product.pricePerUnit).gt(0)) return money(product.pricePerUnit);
+    const gestion = String(product.unit || 'boîte').toLowerCase();
+    if (saleUnit === gestion) return boxPrice;
+    const facteur = facteurVers(chaineEffective(product), gestion, saleUnit);
+    return facteur ? money(D(boxPrice).div(facteur)) : boxPrice;
+  }
+  // 2.7.12 — fiches sans chaîne : inchangé.
   if (saleUnit === 'BLISTER') {
     return D(product.pricePerBlister).gt(0)
       ? money(product.pricePerBlister)
@@ -61,9 +94,20 @@ export function priceForUnit(product, saleUnit, boxPrice) {
 /** Vérifie que l'unité demandée est vendable pour ce médicament. */
 function assertUnitAllowed(product, saleUnit) {
   if (saleUnit === 'BOX') return;
+  // 2.7.84 — chaîne : l'unité doit exister dans la chaîne (sous la gestion).
+  if (chaineEffective(product).length && product.packaging) {
+    const gestion = String(product.unit || 'boîte').toLowerCase();
+    if (saleUnit === gestion) return;
+    const facteur = facteurVers(chaineEffective(product), gestion, saleUnit);
+    ensure(facteur && facteur > 1,
+      `« ${product.name} » ne se vend pas par ${libelleUnite(saleUnit)} : `
+      + 'son conditionnement n’en comporte pas. Réglez la chaîne à la réception '
+      + '(« 1 boîte = N plaquettes… ») pour l’activer.');
+    return;
+  }
   const facteur = saleUnitFactor(product, saleUnit);
   ensure(facteur > 1,
-    `« ${product.name} » ne se vend pas par ${SALE_UNIT_LABELS[saleUnit]} : `
+    `« ${product.name} » ne se vend pas par ${SALE_UNIT_LABELS[saleUnit] ?? saleUnit} : `
     + 'son conditionnement n’en comporte pas. Renseignez le nombre de plaquettes / comprimé '
     + 'dans la fiche du médicament (Catalogue → Modifier) pour l’activer.');
 }
@@ -79,7 +123,10 @@ export async function quoteSale(payload, transaction) {
   for (const row of payload.lines) {
     const product = await Product.findByPk(row.productId, { transaction });
     ensure(product && product.active, 'Médicament absent ou inactif.');
-    const saleUnit = row.saleUnit || 'BOX';
+    // 2.7.84 — le code caisse (BOX/BLISTER/UNIT) est traduit vers l'unité de
+    // la chaîne (« boîte » → unité de gestion du produit, quel qu'en soit le
+    // nom) ; les unités brutes (« ml », « comprimé »…) passent telles quelles.
+    const saleUnit = saleUnitCanonique(product, row.saleUnit || 'BOX');
     assertUnitAllowed(product, saleUnit);
     const facteur = saleUnitFactor(product, saleUnit);
     // Équivalent en unité de gestion (boîte) retiré du stock : 6 décimales.
@@ -95,7 +142,7 @@ export async function quoteSale(payload, transaction) {
     const picked = pickLots(lots, quantiteGestion, {
       date: today(), method: LOT_PICKING.FEFO, allowExpired: settings.allowExpiredSale
     });
-    const etiquette = SALE_UNIT_LABELS[saleUnit];
+    const etiquette = libelleUnite(saleUnit);   // 2.7.84 — legacy + unités brutes
     ensure(picked.missing === 0,
       `Stock vendable insuffisant au comptoir pour « ${product.name} » : ${disponiblesUnites} ${etiquette}(s) vendable(s), `
       + `${row.quantity} demandée(s). Les lots expirés, bloqués ou sans date d’expiration ne sont jamais proposés ; `

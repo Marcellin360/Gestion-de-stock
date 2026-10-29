@@ -5,7 +5,7 @@
 // ============================================================================
 import {
   Receipt, ReceiptLine, Transfer, TransferLine, Sale, SaleLine, Loss, LossLine,
-  Adjustment, AdjustmentLine, Movement, Lot, Product
+  Adjustment, AdjustmentLine, Movement, MovementSuperseded, Lot, Product
 } from '../models/index.js';
 import { money } from '../utils/money.js';
 import { ensure } from '../utils/errors.js';
@@ -180,6 +180,22 @@ export async function cancelDocument(kind, id, reason, user, transaction) {
       unitCost: movement.unitCost
     }))
   }, transaction);
+
+  // 2.7.91/2.7.92 — REGISTRE NET (« safidy A ») : un document ANNULÉ
+  // disparaît des colonnes Entrées/Sorties/Stock final des fiches de stock —
+  // son écriture d'origine ET ses contre-mouvements CANCEL (créés juste
+  // au-dessus) sont marqués « superseded ». ⚠ 2.7.92 : la marque N'EST PAS
+  // un UPDATE (le trigger « movements_immutable », RG19, l'interdit) — on
+  // INSÈRE dans la table séparée « movement_superseded » (INSERT only ;
+  // ignoreDuplicates → rejouable). Aucune ligne supprimée ni modifiée : le
+  // journal « Mouvements » et l'audit conservent l'histoire complète.
+  const mvtSupplantes = await Movement.findAll({
+    where: { documentType: kind, documentId: id }, attributes: ['id'], transaction
+  });
+  await MovementSuperseded.bulkCreate(
+    mvtSupplantes.map(mvt => ({ movementId: mvt.id })),
+    { transaction, ignoreDuplicates: true }
+  );
 
   // 2. Conséquences propres au type de document.
   if (kind === 'RECEIPT') {

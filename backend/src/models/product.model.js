@@ -32,6 +32,14 @@ export const attributes = {
     unitsPerBlister: {type:DataTypes.INTEGER,allowNull:false,defaultValue:10},
     pricePerBlister: {type:DataTypes.DECIMAL(20,6),allowNull:false,defaultValue:0},
     pricePerUnit: {type:DataTypes.DECIMAL(20,6),allowNull:false,defaultValue:0},
+    // 2.7.84 — CONDITIONNEMENT GÉNÉRALISÉ (migration 015) :
+    // packaging = chaîne JSON compacte mémorisée à la réception, ex.
+    //   [["carton","boîte",100],["boîte","plaquette",10],["plaquette","comprimé",10]]
+    //   [["flacon","ml",250]]  (contenance),  [["rouleau","cm",500]]  (longueur)
+    // '' = comportement historique (blistersPerBox/unitsPerBlister seuls).
+    // purchaseUnit = unité d'ACHAT habituelle, re-proposée à la réception.
+    packaging: {type:DataTypes.TEXT,allowNull:false,defaultValue:''},
+    purchaseUnit: {type:DataTypes.STRING(40),allowNull:false,defaultValue:''},
     version: {type:DataTypes.INTEGER,allowNull:false,defaultValue:0},
     createdAt: {type:DataTypes.DATE,allowNull:false,defaultValue:DataTypes.NOW},
     updatedAt: {type:DataTypes.DATE,allowNull:false,defaultValue:DataTypes.NOW}

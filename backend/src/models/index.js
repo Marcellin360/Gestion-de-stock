@@ -12,6 +12,7 @@ import * as loss from './loss.model.js';
 import * as lossLine from './lossLine.model.js';
 import * as lot from './lot.model.js';
 import * as movement from './movement.model.js';
+import * as movementSuperseded from './movementSuperseded.model.js';
 import * as priceHistory from './priceHistory.model.js';
 import * as product from './product.model.js';
 import * as productForm from './productForm.model.js';
@@ -45,6 +46,7 @@ const definitions = [
   lot,
   medicalStaff,
   movement,
+  movementSuperseded,
   patient,
   priceHistory,
   product,
@@ -85,6 +87,7 @@ export const {
   LossLine,
   Lot,
   Movement,
+  MovementSuperseded,
   PriceHistory,
   Product,
   ProductForm,
@@ -176,6 +179,10 @@ TransferLine.belongsTo(Lot, { as: 'toLot', foreignKey: 'toLotId' });
 Movement.belongsTo(Lot, { as: 'lot', foreignKey: 'lotId' });
 Movement.belongsTo(Product, { as: 'product', foreignKey: 'productId' });
 Movement.belongsTo(User, { as: 'author', foreignKey: 'userId' });
+// 2.7.91/2.7.92 — registre net (« safidy A ») : la marque « superseded » vit
+// HORS du journal immuable, en table séparée insert-only (RG19 préservé).
+Movement.hasOne(MovementSuperseded, { as: 'supersession', foreignKey: 'movementId' });
+MovementSuperseded.belongsTo(Movement, { as: 'movement', foreignKey: 'movementId' });
 
 PriceHistory.belongsTo(Product, { as: 'product', foreignKey: 'productId' });
 PriceHistory.belongsTo(User, { as: 'author', foreignKey: 'userId' });

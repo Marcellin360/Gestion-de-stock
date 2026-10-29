@@ -55,7 +55,7 @@ const NAV = [
     // DÉPÔT et à l'ADMINISTRATEUR (masqué pour la pharmacie seule).
     { route: 'calendrier-stock', label: 'Calendrier des stock', icon: CalendarDays, permission: 'receipt', hideFor: ['PHARMACIST'] },
     { route: 'receptions', label: 'Réceptions (dépôt)', icon: PackagePlus, permission: 'receipt' },
-    { route: 'transferts', label: 'Historique de transfert', icon: ArrowRightLeft, permission: 'transfer' },
+    { route: 'transferts', label: 'Transfert vers pharmacie', icon: ArrowRightLeft, permission: 'transfer' },
     // 2.7.15 — Catalogue rétabli pour ADMIN/DEPOT, masqué pour PHARMACIST.
     { route: 'medicaments', label: 'Catalogue', icon: Pill, permission: 'reference', hideFor: ['PHARMACIST'] }
   ] },
@@ -92,7 +92,7 @@ const SOUS_MENUS_PHARMACIE = [
   { route: 'patients', label: 'Hôpital (carnets)', icon: Hospital, permission: 'sale' },
   { route: 'stock-pharmacie', label: 'Stock (pharmacie)', icon: Boxes, permission: 'reports' },
   { route: 'pertes', label: 'Pertes et dons', icon: PackageMinus, permission: 'loss' },
-  { route: 'transferts', label: 'Historique de transfert', icon: ArrowRightLeft, permission: 'transfer' }
+  { route: 'transferts', label: 'Transfert vers pharmacie', icon: ArrowRightLeft, permission: 'transfer' }
 ];
 const SOUS_MENUS_DEPOT = [
   { route: 'rapports', label: 'Stock (dépôt)', icon: Boxes, permission: 'reports' },
@@ -100,7 +100,7 @@ const SOUS_MENUS_DEPOT = [
   { route: 'inventaires', label: 'Inventaire', icon: ClipboardCheck, permission: 'inventory' },
   { route: 'calendrier-stock', label: 'Calendrier des stock', icon: CalendarDays, permission: 'receipt' },
   { route: 'receptions', label: 'Réceptions', icon: PackagePlus, permission: 'receipt' },
-  { route: 'transferts', label: 'Historique de transfert', icon: ArrowRightLeft, permission: 'transfer' },
+  { route: 'transferts', label: 'Transfert vers pharmacie', icon: ArrowRightLeft, permission: 'transfer' },
   { route: 'pertes', label: 'Pertes et dons', icon: PackageMinus, permission: 'loss' },
   { route: 'medicaments', label: 'Catalogue', icon: Pill, permission: 'reference' }
 ];

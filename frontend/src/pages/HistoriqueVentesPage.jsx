@@ -41,6 +41,8 @@ import { Badge, Btn, Card, Empty, ErrorBox, Field, Input, Modal, Select, Spinner
 import SaleHistoryModal, { COULEUR_DETAIL, MESSAGE_PDF_NAVIGATEUR } from '../components/SaleHistoryModal.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { dateTime, integer, money } from '../utils/format.js';
+// 2.7.84 — unités de vente libres (chaîne de conditionnement) : ml, cm…
+import { libelleQuantiteUnite } from '../utils/unites.js';
 
 const ROLE_LABEL = code => (code === 'DOCTOR' ? 'Médecin' : code === 'MIDWIFE' ? 'Sage-femme' : code || '—');
 const dateFr = valeur => (valeur ? String(valeur).slice(0, 10).split('-').reverse().join('/') : '—');
@@ -234,9 +236,9 @@ function ModalSejour({ patientId, onClose }) {
     })
     .catch(cause => toast.error(cause.message || 'Téléchargement du PDF impossible.'));
 
-  const plural = (unite, nombre) => (unite === 'BLISTER' ? (nombre > 1 ? 'plaquettes' : 'plaquette')
-    : unite === 'UNIT' ? (nombre > 1 ? 'comprimés' : 'comprimé')
-      : (nombre > 1 ? 'boîtes' : 'boîte'));
+  // 2.7.84 — l'unité vendue peut être n'importe quelle unité de la chaîne
+  // (« plaquette », « comprimé », « ml », « cm »…) ; codes legacy compris.
+  const plural = (unite, nombre) => libelleQuantiteUnite(unite || 'BOX', nombre);
 
   // 2.7.82 — ordonnance de séjour = TOUJOURS le séjour complet (la fenêtre
   // « Du/Au » au pied de cette fenêtre est retirée sur demande de l'officine).

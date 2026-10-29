@@ -147,7 +147,9 @@ test('2.7.5 → 2.7.11 — plus de menu Documents ; l’adresse #/documents rest
 
 test('2.7.5 — transfert : le lot du dépôt se choisit à la recherche OU dans la liste', () => {
   const transfert = texteDe('forms', 'TransferForm.jsx');
-  assert.ok(transfert.includes('Rechercher : nom, code ou n° de lot…'), 'un champ de recherche est proposé');
+  // 2.7.93 — le placeholder a gagné « présentation » : on épingle le préfixe,
+  // pas le texte exact (évolutif).
+  assert.match(transfert, /placeholder="Rechercher : [^"]*n° de lot…"/, 'un champ de recherche est proposé');
   assert.match(transfert, /const filtrer = terme/, 'la recherche filtre les lots du dépôt');
   assert.ok(transfert.includes('role="option"'), 'les résultats s’affichent sous le champ (suggestions)');
   assert.match(transfert, /<Select value=\{ligne\.lotId\}/, 'la liste déroulante des lots reste disponible');
@@ -299,7 +301,7 @@ test('2.7.11 — menus restructurés : Vente, Stock = rapports, 4 menus retirés
 
   // 7. « Transferts dépôt → pharmacie » devient « Historique de transfert » (détails conservés).
   const ligneTransferts = lignesMenu.find(l => l.includes("route: 'transferts'"));
-  assert.match(ligneTransferts, /label: 'Historique de transfert'/, 'le menu transferts est renommé');
+  assert.match(ligneTransferts, /label: 'Transfert vers pharmacie'/, 'le menu transferts est renommé');
   const transferts = texteDe('pages', 'TransfersPage.jsx');
   assert.match(transferts, /Historique de transfert/, 'le titre de l’écran est aligné');
   assert.match(transferts, /DocumentModal/, 'le détail complet d’un transfert reste présent');
@@ -360,7 +362,10 @@ test('2.7.12 — tableau de bord pharmacie épuré + vente au détail (boîte / 
   assert.match(vente, /code: 'BLISTER'/, 'l’unité « Plaquette » est proposée');
   assert.match(vente, /code: 'UNIT'/, 'l’unité « Comprimé » est proposée');
   assert.match(vente, /saleUnit: ligne\.saleUnit \|\| 'BOX'/, 'le panier envoie saleUnit au serveur');
-  assert.match(vente, /changerUnite\(ligne, unite\.code\)/, 'le bouton change l’unité de la ligne');
+  // 2.7.98 — pin réécrite : la puce est devenue un menu déroulant ; c'est lui
+  // qui change l'unité de la ligne (même fonction changerUnite, même plafond).
+  assert.match(vente, /onChange=\{e => changerUnite\(ligne, e\.target\.value\)\}/,
+    'le select change l’unité de la ligne (2.7.98 : les chips sont devenues une liste)');
   assert.match(vente, /facteurUnite/, 'le stock vendable est converti par unité');
 
   // ── C. Fiche médicament : conditionnement + prix détaillés indépendants ────
@@ -377,8 +382,13 @@ test('2.7.12 — tableau de bord pharmacie épuré + vente au détail (boîte / 
   // ── E. Contrat serveur : le schéma de vente accepte saleUnit ──────────────
   // (le validateur zod refuse tout champ non déclaré : sans lui, la vente au
   // détail serait rejetée comme « champ inconnu »)
+  // 2.7.84 — RÉÉCRIT : l'unité n'est plus un enum fermé BOX/BLISTER/UNIT mais
+  // un texte libre contrôlé en FORME ici ; l'appartenance à la chaîne du
+  // produit est vérifiée par le serveur (conditionnement généralisé).
   const validateur = readFileSync(new URL('../../src/validators/sale.validator.js', import.meta.url), 'utf-8');
-  assert.match(validateur, /saleUnit: z\.enum\(SALE_UNITS/, 'saleUnit est déclaré côté serveur');
+  assert.match(validateur, /saleUnit: z\.string\(\)\.trim\(\)/, 'saleUnit est déclaré côté serveur (texte libre 2.7.84)');
+  assert.ok(validateur.includes("SALE_UNITS = ['BOX', 'BLISTER', 'UNIT']"),
+    'les codes historiques restent acceptés (ventes et écrans 2.7.12)');
   assert.match(validateur, /\$\{l\.productId\}\|\$\{l\.saleUnit\}/, 'même médicament possible en 2 unités');
 });
 
@@ -490,10 +500,10 @@ test('2.7.18 — menu « Calendrier des ventes » sous « Vente » · histogramm
 
   // ── B. L'histogramme « total encaissé par mois » (12 mois). ────────────────
   const histo = texteDe('components', 'SalesHistogram.jsx');
-  for (const repere of ['salesMonthly', '<svg', '<rect', 'BarChart3', 'NOMS_COURTS']) {
+  for (const repere of ['salesMonthly', '<svg', '<rect', 'BarChart3', 'NOMS']) {
     assert.ok(histo.includes(repere), `repère histogramme « ${repere} »`);
   }
-  assert.match(histo, /const fenetre = \[\]/, 'fenêtre de 12 mois (mois sans vente = barre à zéro)');
+  assert.ok(histo.includes('length: periode') && histo.includes('[12, 6, 3]'), 'fenêtre de 12 mois par défaut, mois sans vente à zéro');
   assert.ok(histo.includes('<title>'), 'chaque barre a son infobulle (ventes · encaissé · marge)');
 
   // ── C. Le serveur : agrégat mois par mois + route + helper. ────────────────
@@ -537,10 +547,10 @@ test('2.7.20 — transfert dépôt seul · cartes au Stock dépôt · flux mensu
     'pharmacie → histogramme des ventes · dépôt → flux entrées/sorties');
 
   const flux = texteDe('components', 'DepotFlowChart.jsx');
-  for (const repere of ['stockFlowMonthly', '<svg', '<rect', 'NOMS_COURTS', 'ArrowDownUp']) {
+  for (const repere of ['stockFlowMonthly', '<svg', '<rect', 'NOMS', 'ArrowDownUp']) {
     assert.ok(flux.includes(repere), `repère flux dépôt « ${repere} »`);
   }
-  assert.match(flux, /for \(let i = 11; i >= 0; i -= 1\)/, '12 mois glissants');
+  assert.ok(flux.includes('length: 12'), '12 mois glissants');
   assert.ok(flux.includes('#16a34a') && flux.includes('#ea580c'), 'vert = entrées · orange = sorties');
   assert.ok(flux.includes('<title>'), 'infobulle (title) sur chaque mois');
 
@@ -739,7 +749,6 @@ test('2.7.22 — administrateur : 5 menus avec blocs « Pharmacie » et « Dép�
 //   • pas de bloc statistique (ventes · marge · pertes · achats · transferts ·
 //     mouvements).
 // ============================================================================
-
 test('2.7.23 — dépôt : bouton « Detail » (boîte de dialogue) sans les colonnes/méta retirées', () => {
   // 2.7.78 — REPÈRES RÉÉCRITS (demande de l'officine) : le bouton « Detail »
   // du dépôt est REMPLACÉ par « Telecharger » — VERT plein, flèche de
@@ -802,7 +811,7 @@ test('2.7.24 — detail plein écran · CSV dépôt épuré · utilisateurs sans
   const rapports = readFileSync(join(racine, 'backend', 'src', 'controllers', 'reports.controller.js'), 'utf8');
   const auth = readFileSync(join(racine, 'backend', 'src', 'services', 'auth.service.js'), 'utf8');
 
-     // ── ① Taille « detail » plein écran (Modal). ────────────────────────────
+  // ── ① Taille « detail » plein écran (Modal). ────────────────────────────
   // 2.7.80 (repère RÉÉCRIT) : la boîte « Historique d’inventaire » a été
   // retirée en 2.7.80 (la liste porte directement le comptage) ; la taille
   // plein écran reste DISPONIBLE dans ui.jsx et styles.css pour les autres
@@ -810,6 +819,8 @@ test('2.7.24 — detail plein écran · CSV dépôt épuré · utilisateurs sans
   assert.ok(ui.includes('size'), 'ui.jsx : Modal accepte une taille nommée');
   assert.match(ui, /modal--\$\{size\}|modal--detail/, 'Modal compose la classe de taille');
   assert.ok(css.includes('.modal--detail'), 'styles.css : la taille « detail » existe');
+  assert.match(css, /\.modal--detail[\s\S]{0,400}97vw/, 'pleine largeur (97 % de l’écran)');
+  assert.match(css, /\.modal--detail[\s\S]{0,400}96vh/, 'pleine hauteur (96 % de l’écran)');
 
   // ── ② Export CSV du DÉPÔT : les 4 colonnes de découpe en sont retirées. ───
   assert.ok(rapports.includes('COLONNES_RETIREES_CSV'), 'reports.controller : liste des colonnes retirées du CSV dépôt');
@@ -1204,8 +1215,9 @@ test('2.7.31 — unité à la réception, listes au contenu, quantité saisissab
   // lot par lot à la réception (remplaçant de « Fabriqué le »).
   assert.ok(!fiche.includes('label="Nom de Fabriquant"'),
     '2.7.49 : la fiche médicament ne demande plus le fabricant');
-  assert.ok(reception.includes("const UNITES_GESTION = ['boîte', 'flacon', 'pièce', 'plaquette'];"),
-    'la réception propose Boîte, Flacon, Pièce, Plaquette');
+  // 2.7.83 — la liste est ENRICHIE (dépôt) : neuf choix, « pièce » retirée.
+  assert.ok(reception.match(/const UNITES_GESTION = \['boîte', 'plaquette', 'flacon', 'comprimé', 'ampoule', 'rouleau', 'carton'/) /* 2.7.94 : liste enrichie (sachet, pièce) — préfixe épinglé */,
+    'la réception propose Boîte, Plaquette, Flacon, Comprimé, Ampoule, Rouleau, Carton, ml, cm (2.7.83)');
   assert.ok(reception.includes('label="Unité de gestion"'),
     'la liste déroulante est dans « Nouvelle réception »');
   assert.ok(reception.includes('title={`${product.name} — stock actuel au dépôt :'),
@@ -1262,7 +1274,7 @@ test('2.7.32 — LIKE sur les listes, info-bulles boutons, lecture seule, stock 
   const transfert = readFileSync(join(racine, 'frontend', 'src', 'forms', 'TransferForm.jsx'), 'utf8');
   const perte = readFileSync(join(racine, 'frontend', 'src', 'forms', 'LossForm.jsx'), 'utf8');
 
-    // ④ Recherche LIKE (contient, insensible aux majuscules) sur TOUTES les listes.
+  // ④ Recherche LIKE (contient, insensible aux majuscules) sur TOUTES les listes.
   // 2.7.78 (repères RÉÉCRITS, demande de l'officine) : la mention « (LIKE) »
   // disparaît des libellés ; fournisseurs et catégories affichent « Recherche »
   // à DROITE du titre de la carte ; réceptions colle le libellé « Recherche »
@@ -1275,8 +1287,7 @@ test('2.7.32 — LIKE sur les listes, info-bulles boutons, lecture seule, stock 
   for (const [nom, texte] of [['Fournisseurs', fournisseurs], ['Catégories', categories]]) {
     assert.ok(texte.includes('label="Recherche"'), `${nom} : 2.7.78 — libellé « Recherche » (case à droite du titre)`);
   }
-  assert.ok(receptions.includes('>Recherche</span>'), '2.7.78 — Réceptions : libellé « Recherche » collé au champ'); 
-
+  assert.ok(receptions.includes('>Recherche</span>'), '2.7.78 — Réceptions : libellé « Recherche » collé au champ');
   // 2.7.74 — Pertes et dons (repère réécrit, demande de l'officine) : le
   // libellé se raccourcit en « Recherche », collé À GAUCHE du champ sur la
   // même ligne ; le filtre reste le LIKE insensible à la casse.
@@ -1319,7 +1330,7 @@ test('2.7.33 — ticket A5 ×2, ventes entre deux dates, dashboard mensuel, fich
   const routesRapports = readFileSync(join(racine, 'backend', 'src', 'routes', 'reports.routes.js'), 'utf8');
   const ongletFiche = readFileSync(join(racine, 'frontend', 'src', 'pages', 'FicheStockTab.jsx'), 'utf8');
 
-  // ⑬ Ticket : format A5 portrait, DEUX exemplaires, sans colonnes Lot/Expiration.
+  // ⑬ Ticket : format A5 paysage, DEUX exemplaires, sans colonnes Lot/Expiration.
   assert.ok(ticket.includes('size: A5 landscape'), 'ticket : page A5 portrait déclarée');
   assert.ok(ticket.includes('Exemplaire client') && ticket.includes('Copie pharmacie — à conserver'),
     'ticket : deux exemplaires (client + copie de la pharmacie)');
@@ -1330,8 +1341,10 @@ test('2.7.33 — ticket A5 ×2, ventes entre deux dates, dashboard mensuel, fich
     'gabarit commun : options bare (corps autonome) et extraCss (format de page)');
 
   // ⑭ Ventes entre deux dates (du … au …) dans « Historique de vente ».
-  assert.ok(historiqueVentes.includes('label="Du"') && historiqueVentes.includes('label="Au (jusqu’à)"'),
-    'historique : deux champs date « Du » et « Au (jusqu’à) »');
+  // 2.7.68 — étiquettes enrichies (« début/fin de la période ») lors de la
+  // mise en carte, toujours deux champs date « Du » et « Au ».
+  assert.ok(historiqueVentes.includes('label="Du (début de la période)"') && historiqueVentes.includes('label="Au (fin de la période)"'),
+    'historique : deux champs date « Du » et « Au »');
   assert.ok(historiqueVentes.includes('>= filtres.du') && historiqueVentes.includes('<= filtres.au'),
     'historique : filtre entre les deux bornes');
   assert.ok(historiqueVentes.includes('du: today(), au: today()') && historiqueVentes.includes("du: addDays(-30), au: today()"),
@@ -1343,7 +1356,7 @@ test('2.7.33 — ticket A5 ×2, ventes entre deux dates, dashboard mensuel, fich
     'serveur : monthStats calcule ventes, marge, pertes, achats et transferts du mois');
   assert.ok(dashService.includes('month,') || dashService.includes('month:'), 'serveur : mois envoyé dans /api/data');
   assert.ok(dashPage.includes('month={month}') || dashPage.includes('Mois de'), 'dashboard : carte « Mois de … »');
-  assert.ok(dashPage.includes('Ventes du mois') && dashPage.includes('Panier moyen'),
+  assert.ok(dashPage.includes('Chiffre d’affaires du mois') && dashPage.includes('Panier moyen'),
     'dashboard : ventes du mois, marge, panier moyen, pertes');
 
   // ⑪ Fiche de stock d'UN médicament : mouvements + solde cumulé, impression.
@@ -1932,6 +1945,10 @@ test('2.7.55 — client en liste déroulante seule ; aides redondantes retirées
 });
 
 // ============================================================================
+// 2.7.56 — TICKETS & ORDONNANCES : forme « modèle » (mentions centrées,
+//   filets horizontaux, total centré, ligne de coupe ✂) + VERSION PDF
+//   TÉLÉCHARGEABLE (générateur maison, zéro dépendance, hors-ligne).
+// ============================================================================
 test('2.7.56 — ticket/ordonnances en forme modèle + PDF téléchargeable', () => {
   const lire = chemin => readFileSync(join(racine, ...chemin), 'utf8');
   const utilPdf = lire(['backend', 'src', 'utils', 'pdf.js']);
@@ -2178,56 +2195,6 @@ test('2.7.61 — version unique au démarrage + doctor-pdf (PID, --vono)', () =>
   assert.ok(doctor.includes('cd backend'), 'doctor-pdf.mjs : indique le bon dossier de redémarrage');
 });
 
-async function causeRefusPdf(response) {
-  const corps = await response.clone().text().catch(() => '');
-  const version = await fetch('/api/version', { credentials: 'same-origin' })
-    .then(reponse => (reponse.ok ? reponse.json() : null))
-    .catch(() => null);
-
-  if (!version?.versionAppli) {
-    return 'PAS de PDF : le backend qui RÉPOND est un ANCIEN code (il ne connaît '
-      + 'même pas /api/version, ajoutée en 2.7.60). Redémarrer ne change rien tant '
-      + 'que ce n’est pas LUI qu’on relance : FERMEZ toutes les fenêtres de '
-      + 'terminal, tuez les processus Node encore ouverts (gestionnaire des '
-      + 'tâches), puis relancez le BACKEND DEPUIS LE DOSSIER du projet où vous avez '
-      + 'collé le code — et vérifiez le PORT annoncé au démarrage. '
-      + '(Ce n’est pas F5 : il faut relancer le BACKEND lui-même, pas le navigateur.)';
-  }
-
-  const detail = lectureCorpsErreur(corps);
-
-  // 2.7.62 — EST-CE BIEN NOTRE backend qui a répondu ? Chaque réponse de
-  // l'API porte l'empreinte X-PharmaStock-Code (posée par routes/index.js).
-  // Un 204 VIDE sans cette empreinte ne peut PAS venir de PharmaStock :
-  // c'est un intermédiaire (antivirus web-shield, proxy, extension) qui
-  // intercepte les téléchargements. Fingerprint des en-têtes pour le
-  // confirmer visuellement.
-  const empreinte = response.headers.get('x-pharmastock-code');
-  if (!empreinte) {
-    const indices = ['server', 'via', 'x-powered-by', 'content-type']
-      .map(nom => [nom, response.headers.get(nom)])
-      .filter(([, valeur]) => valeur)
-      .map(([nom, valeur]) => `${nom}: ${valeur}`)
-      .join(' · ');
-    return `PDF refusé (code ${response.status}) : CE N'EST PAS PharmaStock `
-      + 'qui a répondu (empreinte X-PharmaStock-Code absente — un intermédiaire '
-      + 'a pris la place sur la réponse : ANTIVIRUS « protection web », proxy, '
-      + 'ou extension du navigateur). Essayez d’abord une FENÊTRE PRIVÉE '
-      + '(Ctrl + Maj + N) : si le PDF passe, coupable = extension/antivirus '
-      + '(ajoutez le site aux exclusions de sa protection web). '
-      + (indices ? `En-têtes vus : ${indices}.` : '');
-  }
-
-  if (/discharged_on|does not exist|column/i.test(detail)) {
-    return `PAS de PDF : la base n’a pas encore la colonne de la 2.7.59 — `
-      + `lancez « npm run db:migrate » à la racine du projet, puis relancez le `
-      + `BACKEND. (Cause serveur : ${detail.slice(0, 180)})`;
-  }
-  return `PDF refusé (code ${response.status}) : ${detail.slice(0, 220)} — `
-    + 'arrêtez puis relancez le BACKEND (pas F5 !), refaites « npm run build » '
-    + 'et recommencez ; la cause exacte figure aussi dans la console du serveur.';
-}
-
 // ============================================================================
 // 2.7.62 — EMPREINTE DU SERVEUR RÉEL : un « 204 No Content » en réponse au
 //   téléchargement PDF ne venait PAS de PharmaStock (l'API n'en renvoie
@@ -2255,10 +2222,9 @@ test('2.7.62 — empreinte X-PharmaStock-Code + accusé « ce n’est pas Pharma
   assert.ok(client.includes('En-têtes vus'), 'client.js : fingerprint des en-têtes pour confirmer');
 
   // La version a progressé (servie par /api/version et la bannière).
-  assert.ok(/VERSION_APPLI = '2\.7\.6[2-9]/.test(version),
+  assert.ok(/VERSION_APPLI = '2\.(7\.(6[2-9]|[7-9]\d|\d{3,})|[89])/.test(version),
     'version.js : version ≥ 2.7.62');
 });
-
 
 // ============================================================================
 // 2.7.63 — FIN DU « 204 No Content » : quand la protection web locale
@@ -2290,7 +2256,7 @@ test('2.7.63 — contournement navigateur du « 204 » (fetch vidé par la prote
     'SalesPage : message « téléchargement lancé par le navigateur » quand contournement');
 
   // La version a progressé.
-  assert.ok(/VERSION_APPLI = '2\.7\.6[3-9]/.test(version), 'version.js : version ≥ 2.7.63');
+  assert.ok(/VERSION_APPLI = '2\.(7\.(6[3-9]|[7-9]\d|\d{3,})|[89])/.test(version), 'version.js : version ≥ 2.7.63');
 });
 
 // ============================================================================
@@ -2309,7 +2275,7 @@ test('2.7.64 — le toast de contournement utilise toast.warn (objet, pas foncti
     'SalesPage : plus d’appel direct toast(…) (toast est un objet, pas une fonction)');
   assert.ok(vente.includes('toast.error(cause.message'),
     'SalesPage : le garde-fou erreur (2.7.58) est intact');
-  assert.ok(/VERSION_APPLI = '2\.7\.6[4-9]/.test(version), 'version.js : version ≥ 2.7.64');
+  assert.ok(/VERSION_APPLI = '2\.(7\.(6[4-9]|[7-9]\d|\d{3,})|[89])/.test(version), 'version.js : version ≥ 2.7.64');
 });
 
 // ============================================================================
@@ -2351,7 +2317,7 @@ test('2.7.65 — historique de vente : ordonnance de séjour et impressions tél
   assert.ok(modale.includes('toast.warn(MESSAGE_PDF_NAVIGATEUR)'),
     'Historique tsotra : contournement « navigateur » annoncé');
 
-  assert.ok(/VERSION_APPLI = '2\.7\.6[5-9]/.test(version), 'version.js : version ≥ 2.7.65');
+  assert.ok(/VERSION_APPLI = '2\.(7\.(6[5-9]|[7-9]\d|\d{3,})|[89])/.test(version), 'version.js : version ≥ 2.7.65');
 });
 
 // ============================================================================
@@ -2374,11 +2340,13 @@ test('2.7.66 — historique : colonne Action, couleurs bleu/vert/rouge, dates en
   const version = lire(['backend', 'src', 'utils', 'version.js']);
 
   // Colonne « Action » séné des 2 côtés (liste tsotra + liste patient).
-  assert.ok(modale.includes('<th className="right">Action</th>'),
-    'Liste ventes : dernière colonne « Action » alignée à droite');
-  assert.ok(page.includes("{ label: 'Action', right: true }"),
-    'Liste patients : colonne « Action » alignée à droite');
-  assert.ok(ui.includes('column.right'), 'Table : option colonne « right » supportée');
+  // 2.7.67 — « Action » est désormais CENTRÉE (demande ergonomie suivante).
+  assert.ok(modale.includes('<th className="center">Action</th>'),
+    'Liste ventes : dernière colonne « Action » centrée');
+  // 2.7.67 — « Action » est désormais CENTRÉE (demande ergonomie suivante).
+  assert.ok(page.includes("{ label: 'Action', center: true }"),
+    'Liste patients : colonne « Action » centrée');
+  assert.ok(ui.includes('column.right') && ui.includes('column.center'), 'Table : options « right » et « center » supportées');
 
   // Code couleur bleu / vert / rouge des actions.
   assert.ok(modale.includes('COULEUR_DETAIL') && modale.includes('#1d4ed8'), 'Détail = BLEU');
@@ -2405,9 +2373,8 @@ test('2.7.66 — historique : colonne Action, couleurs bleu/vert/rouge, dates en
   assert.ok(!styles.includes('var(--brand)'), 'Plus de variable fantôme --brand');
   assert.ok(!styles.includes('var(--line)'), 'Plus de variable fantôme --line');
 
-  assert.ok(/VERSION_APPLI = '2\.7\.6[6-9]/.test(version), 'version.js : version ≥ 2.7.66');
+  assert.ok(/VERSION_APPLI = '2\.(7\.(6[6-9]|[7-9]\d|\d{3,})|[89])/.test(version), 'version.js : version ≥ 2.7.66');
 });
-
 
 // ============================================================================
 // 2.7.67 — HISTORIQUE : peaufinage ergonomique.
@@ -2447,7 +2414,7 @@ test('2.7.67 — Action centrée, boutons pleins colorés + espace, liste en sec
   assert.ok(styles.includes('table.data .actes') && styles.includes('gap: 6px'),
     'CSS : espace régulier entre les boutons');
 
-   // Détail du séjour hôpital : « Fermer » ROUGE à la fin (2.7.82 — DU/ÀU du
+  // Détail du séjour hôpital : « Fermer » ROUGE à la fin (2.7.82 — DU/ÀU du
   // pied retirés ; épinglage 2.7.67 réécrit : sélecteur « Jour » conservé).
   assert.ok(page.includes('aria-label="Jour de l’ordonnance (achats de ce jour seulement)"'),
     'Détail séjour : sélecteur « Jour » conservé (ordonnance du jour, 2.7.79)');
@@ -2460,7 +2427,7 @@ test('2.7.67 — Action centrée, boutons pleins colorés + espace, liste en sec
   assert.ok(modale.includes('liste-ventes') && styles.includes('.liste-ventes'),
     'Liste de l’historique de vente : SECTION à part');
 
-  assert.ok(/VERSION_APPLI = '2\.7\.6[7-9]/.test(version), 'version.js : version ≥ 2.7.67');
+  assert.ok(/VERSION_APPLI = '2\.(7\.(6[7-9]|[7-9]\d|\d{3,})|[89])/.test(version), 'version.js : version ≥ 2.7.67');
 });
 
 // ============================================================================
@@ -2502,7 +2469,7 @@ test('2.7.68 — onglet Clients tsotra : même présentation en 2 cartes que l�
   assert.ok(styles.includes('.liste-ventes { margin-top: 14px; padding: 0;'),
     'Section liste interne aplatie (plus de carte dans la carte)');
 
-  assert.ok(/VERSION_APPLI = '2\.7\.6[8-9]/.test(version), 'version.js : version ≥ 2.7.68');
+  assert.ok(/VERSION_APPLI = '2\.(7\.(6[8-9]|[7-9]\d|\d{3,})|[89])/.test(version), 'version.js : version ≥ 2.7.68');
 });
 
 // ============================================================================
@@ -2539,7 +2506,7 @@ test('2.7.69 — Hôpital : Action centrée, espaces, couleurs Modifier/Réactiv
   assert.ok(!page.includes('Emploi du temps des 7 prochains jours, glissant'),
     'paragraphe explicatif sous le TDR : retiré');
 
-  assert.ok(/VERSION_APPLI = '2\.7\.69/.test(version) || /VERSION_APPLI = '2\.7\.[7-9]\d/.test(version),
+  assert.ok(/VERSION_APPLI = '2\.7\.69/.test(version) || /VERSION_APPLI = '2\.7\.([7-9]\d|\d{3,})/.test(version),
     'version.js : version ≥ 2.7.69');
 });
 
@@ -2577,7 +2544,6 @@ test('2.7.70 — Action réellement centrée au-dessus des boutons, tailles unif
   assert.ok(/VERSION_APPLI = '2\.7\.\d+/.test(version) && !version.includes("'2.7.69'"),
     'version.js : version ≥ 2.7.70');
 });
-
 
 // ============================================================================
 // 2.7.71 — MENU « STOCK » : couleurs des boutons, « Imprimer » = PDF direct,
@@ -2654,10 +2620,9 @@ test('2.7.71 — Stock : boutons colorés, « Imprimer » télécharge le PDF, D
     && ecran.includes('Détail boîte / plaquette'),
     '⑤ seuil/situation toujours masqués, bouton de détail intact');
 
-  assert.ok(/VERSION_APPLI = '2\.(7\.(7[1-9]|[8-9]\d)|[89])/.test(version),
+  assert.ok(/VERSION_APPLI = '2\.(7\.(7[1-9]|[8-9]\d|\d{3,})|[89])/.test(version),
     'version.js : version ≥ 2.7.71');
 });
-
 
 // ============================================================================
 // 2.7.72 — HISTORIQUE DE TRANSFERT : colonne « Action » centrée + Détail bleu,
@@ -2679,12 +2644,13 @@ test('2.7.72 — Transferts : Action centrée, Détail bleu, Du/Au, détail = PD
   const service = lire(['backend', 'src', 'services', 'ticket.service.js']);
   const version = lire(['backend', 'src', 'utils', 'version.js']);
 
-  // ── 1. Liste : colonne « Action » CENTRÉE, bouton « Détail » en BLEU. ────
+  // ── 1. Liste : colonne « Action » CENTRÉE, bouton « Détail » VERT (2.7.83 —
+  //    dépôt ; était bleu plein 2.7.72/2.7.67). ────────────────────────────
   assert.ok(page.includes("{ label: 'Action', center: true }"),
     '① la demande « Action » est intitulée au-dessus du bouton Détail, centrée');
   assert.ok(page.includes('<td className="center nowrap">'), '① la cellule se centre comme sa colonne');
-  assert.ok(page.includes('style={COULEUR_DETAIL} icon={Eye}') && page.includes('>Détail</Btn>'),
-    '① le bouton « Détail » est en bleu plein (tons de la vente, 2.7.67)');
+  assert.ok(page.includes('style={COULEUR_IMPRIMER} icon={Eye}') && page.includes('>Détail</Btn>'),
+    '① le bouton « Détail » est en VERT plein (2.7.83 — demande du dépôt)');
 
   // ── 2. Deux CARTES comme le menu « Stock » + saisie entre deux dates. ────
   assert.ok(page.includes("Historique de transfert") && page.includes('transfert(s) sur la période'),
@@ -2726,7 +2692,7 @@ test('2.7.72 — Transferts : Action centrée, Détail bleu, Du/Au, détail = PD
     '⑤ dépôt seul crée un transfert (2.7.20), la pharmacie lit l’historique');
   assert.ok(page.includes('DocumentModal'), '⑤ le détail reste une boîte de dialogue');
 
-  assert.ok(/VERSION_APPLI = '2\.(7\.(7[2-9]|[8-9]\d)|[89])/.test(version),
+  assert.ok(/VERSION_APPLI = '2\.(7\.(7[2-9]|[8-9]\d|\d{3,})|[89])/.test(version),
     'version.js : version ≥ 2.7.72');
 });
 
@@ -2756,7 +2722,7 @@ test('2.7.73 — Pertes : Action centrée, « Détail » bleu, Télécharger VER
     '① « Fiche » devient « Détail » en bleu plein (icône œil)');
   assert.ok(!page.includes('>Fiche</Btn>'), '① le libellé « Fiche » a disparu des boutons');
 
-    // ── 2. La recherche (LIKE) À DROITE ; libellé revu en 2.7.74 (repère réécrit). ─
+  // ── 2. La recherche (LIKE) À DROITE ; libellé revu en 2.7.74 (repère réécrit). ─
   assert.ok(page.includes('>Recherche</span>') && page.includes("flexDirection: 'row'"),
     '② le champ de recherche est toujours là, libellé collé à sa gauche depuis la 2.7.74');
   assert.ok(page.includes("justifyContent: 'flex-end'"), '② alignée toujours à droite de la page');
@@ -2787,7 +2753,7 @@ test('2.7.73 — Pertes : Action centrée, « Détail » bleu, Télécharger VER
   assert.ok(page.includes('Déclarer une perte') && page.includes('Coût total constaté'),
     '⑤ le bouton de déclaration et le badge de total restent');
 
-  assert.ok(/VERSION_APPLI = '2\.(7\.(7[3-9]|[8-9]\d)|[89])/.test(version),
+  assert.ok(/VERSION_APPLI = '2\.(7\.(7[3-9]|[8-9]\d|\d{3,})|[89])/.test(version),
     'version.js : version ≥ 2.7.73');
 });
 
@@ -2832,10 +2798,9 @@ test('2.7.74 — Pertes : « Recherche » à gauche du champ (sans mention super
   assert.ok(page.includes('Déclarer une perte') && page.includes('Coût total constaté'),
     '③ déclaration de perte et badge de total intacts');
 
-  assert.ok(/VERSION_APPLI = '2\.(7\.(7[4-9]|[8-9]\d)|[89])/.test(version),
+  assert.ok(/VERSION_APPLI = '2\.(7\.(7[4-9]|[8-9]\d|\d{3,})|[89])/.test(version),
     'version.js : version ≥ 2.7.74');
 });
-
 
 // ============================================================================
 // 2.7.77 — TABLEAU DE BORD, formes de la maquette : groupes blancs à liseré
@@ -2874,10 +2839,10 @@ test('2.7.77 — tableau de bord : tuiles colorées à la maquette + soulèvemen
     '② la tuile se soulève doucement au passage du curseur');
 
   // ── 3. Mêmes chiffres qu'avant : aperçu mois/jour/stock/médicaments. ─────
-  assert.ok(page.includes('Ventes du mois') && page.includes('Marge du mois')
+  assert.ok(page.includes('Chiffre d’affaires du mois') && page.includes('Marge du mois')
     && page.includes('Panier moyen') && page.includes('Pertes du mois'),
     '③ activité du mois : mêmes indicateurs');
-  assert.ok(page.includes('Ventes du jour') && page.includes('Pertes du jour')
+  assert.ok(page.includes('Chiffre d’affaires du jour') && page.includes('Pertes du jour')
     && page.includes('Valeur globale du stock') && page.includes('Médicaments actifs'),
     '③ activité du jour et état du stock : mêmes indicateurs');
   assert.ok(page.includes("Mois de ${nomDuMois(month.month)}")
@@ -2897,15 +2862,37 @@ test('2.7.77 — tableau de bord : tuiles colorées à la maquette + soulèvemen
     '④ l’administrateur voit les deux graphiques (2.7.21)');
   assert.ok(page.includes("'[Pharmacie] '") && page.includes('Nouvelle vente') && page.includes('Perte ou don'),
     '④ préfixe d’alertes et actions rapides intacts');
-  assert.ok(histo.includes('salesMonthly') && histo.includes('cheminLisse') && histo.includes('#0f766e'),
-    '④ courbe des ventes aux tons du thème clair (2.7.76)');
+  assert.ok(histo.includes('salesMonthly') && histo.includes('ventesBarres103') && histo.includes('#1261ce'),
+    '④ histogramme bleu des ventes en thème clair (2.7.103)');
   assert.ok(flux.includes('#16a34a') && flux.includes('#ea580c') && flux.includes('stockFlowMonthly'),
     '④ flux du dépôt : barres vert/orange inchangées');
 
-  assert.ok(/VERSION_APPLI = '2\.(7\.(7[7-9]|[8-9]\d)|[89])/.test(version),
+  assert.ok(/VERSION_APPLI = '2\.(7\.(7[7-9]|[8-9]\d|\d{3,})|[89])/.test(version),
     'version.js : version ≥ 2.7.77');
 });
 
+// ============================================================================
+// 2.7.78 — VAGUE « PRÉSENTATION & ÉPURATION » (demande de l'officine) :
+//   ① flux mensuels du dépôt dessinés COMME l'histogramme des ventes
+//     (courbes lissées + aires dégradées, toujours vert/orange) ;
+//   ② menu Stock : « Recalculer » VERT ; dépôt « Detail » → « Telecharger »,
+//     boîte de détail supprimée (détail du repère 2.7.23 réécrit là-bas) ;
+//   ③ Inventaires : « Fiche de stock du mois » en boîte PLEIN ÉCRAN
+//     (size="detail") avec « Telecharger PDF » vert (fmt=pdf, déjà servi) ;
+//   ④ Réceptions : deux cartes (période + liste), recherche à droite
+//     « Recherche », colonne « Action » centrée, Modifier BLEU / Détail VERT
+//     espacés, détail en boîte SANS « Imprimer » (sansImprimer) + pdf:true ;
+//   ⑤ Pertes : même boîte sans « Imprimer » ;
+//   ⑥ Transfert (formulaire) : textes explicatifs retirés (règle FEFO
+//     INCHANGÉE), bouton « Retirer » ROUGE ;
+//   ⑦ Médicaments : deux cartes, gestes centrés et colorés ; fiche épurée
+//     (4 cases « vente au détail » masquées MAIS toujours envoyées, « Retour »
+//     rouge) ; catégories/fournisseurs alignés ; fiche fournisseur sans
+//     bannière ;
+//   ⑨ Côté serveur : le BON DE RÉCEPTION existe en PDF téléchargeable
+//     (templates/receptionPdf.js + receptionBonPdf + branche RECEIPT fmt=pdf) ;
+//     aucune migration de base.
+// ============================================================================
 test('2.7.78 — flux dépôt façon histogramme · gestes centrés-colorés · textes épurés · bon de réception PDF', () => {
   const flux = texteDe('components', 'DepotFlowChart.jsx');
   const stock = texteDe('pages', 'ReportsPage.jsx');
@@ -2925,10 +2912,10 @@ test('2.7.78 — flux dépôt façon histogramme · gestes centrés-colorés · 
   const controleurDoc = readFileSync(join(racine, 'backend', 'src', 'controllers', 'document.controller.js'), 'utf8');
 
   // ① Flux mensuels du dépôt : MÊME DESSIN que l'histogramme des ventes.
-  assert.ok(flux.includes('cheminLisse'), 'flux dépôt : courbes lissées (technique de l’histogramme des ventes)');
-  assert.ok(flux.includes('degradeAireFluxEntrees') && flux.includes('degradeAireFluxSorties'),
-    'flux dépôt : aires dégradées sous les deux courbes (entrées / sorties)');
-  assert.ok(flux.includes('fill="url(#degradeAireFluxEntrees)"'), 'aire sous la courbe des entrées');
+  assert.ok(flux.includes('hauteur = 100') && flux.includes('zero = 150'), 'flux dépôt : histogramme divergent autour de zéro');
+  assert.ok(flux.includes('entreesBarres103') && flux.includes('sortiesBarres103'),
+    'flux dépôt : barres dégradées entrées / sorties');
+  assert.ok(flux.includes('fill="url(#entreesBarres103)"'), 'barres des entrées en vert');
   assert.ok(flux.includes('#16a34a') && flux.includes('#ea580c'), 'vert = entrées · orange = sorties (inchangé)');
   assert.ok(flux.includes('stockFlowMonthly') && flux.includes('<title>'), 'mêmes données, info-bulles par mois');
 
@@ -2947,7 +2934,7 @@ test('2.7.78 — flux dépôt façon histogramme · gestes centrés-colorés · 
     '2.7.80 : la boîte « Détail/Historique » a disparu — le comptage est sur la liste');
   assert.ok(inventaires.includes('<th className="num">Physique (compté)</th>'),
     '2.7.80 : liste des inventaires au contenu, « Physique (compté) » demandé');
-  
+
   // ④ Réceptions : deux cartes, recherche à droite, Action centrée-colorée.
   assert.ok(receptions.includes('Réceptions (dépôt)') && receptions.includes('réception(s) sur la période'),
     'réceptions : carte 1 (période) + carte 2 (liste)');
@@ -3017,9 +3004,9 @@ test('2.7.78 — flux dépôt façon histogramme · gestes centrés-colorés · 
   assert.ok(controleurDoc.includes("kind === 'RECEIPT' && req.query.fmt === 'pdf'") && controleurDoc.includes('receptionBonPdf'),
     'contrôleur : branche RECEIPT fmt=pdf (après LOSS 2.7.73)');
 
-    // ⑩ Version affichée partout (repère générique : au moins 2.7.78).
+  // ⑩ Version affichée partout (repère générique : au moins 2.7.78).
   const version = readFileSync(join(racine, 'backend', 'src', 'utils', 'version.js'), 'utf8');
-  assert.ok(/VERSION_APPLI = '2\.(7\.(7[8-9]|[8-9]\d)|[89])/.test(version),
+  assert.ok(/VERSION_APPLI = '2\.(7\.(7[8-9]|[8-9]\d|\d{3,})|[89])/.test(version),
     'version.js : version ≥ 2.7.78');
 });
 
@@ -3075,28 +3062,42 @@ test('2.7.79 — historique d’inventaire · corrections de transfert · « Ser
   const migration = readFileSync(join(racine, 'backend', 'sql', '014_motif_patients_corrections_transfert.sql'), 'utf8');
   const version = lire(['backend', 'src', 'utils', 'version.js']);
 
-  // ── ① INVENTAIRES : historique par session ; fiche du mois retirée. ──────
+  // ── ① INVENTAIRES — repères RÉÉCRITS en 2.7.80 (demande de l'officine) : ─
   assert.ok(!inventaires.includes('ouvrirFicheDuMois')
     && !inventaires.includes('Fiche de stock du mois')
     && !inventaires.includes('reports.load('),
     '① la « Fiche de stock du mois » a quitté l’écran Inventaires');
-  assert.ok(inventaires.includes('ouvrirHistorique') && inventaires.includes('Historique d’inventaire')
-    && inventaires.includes('size="detail"'),
-    '① « Détail » ouvre l’historique de la session, en boîte plein écran');
-  for (const colonne of ['<th>Médicament</th>', '<th>Lot</th>', '<th>Réception (reçu le)</th>',
-    '<th className="num">Théorique</th>', '<th className="num">Physique (compté)</th>',
-    '<th className="num">Écart</th>', '<th>Justification</th>']) {
-    assert.ok(inventaires.includes(colonne), `① colonne de l’historique : ${colonne}`);
+  // 2.7.80 — la boîte « Historique d’inventaire » (2.7.79) a été RETIRÉE à son
+  // tour : la liste elle-même porte désormais les colonnes comptées.
+  assert.ok(!inventaires.includes('ouvrirHistorique') && !inventaires.includes('size="detail"'),
+    '① 2.7.80 : plus de boîte « Détail » — la liste affiche directement le comptage');
+  assert.ok(!inventaires.includes('<th>Référence</th>') && !inventaires.includes('<th className="num">Lots comptés</th>'),
+    '① 2.7.80 : « Référence » et « Lots comptés » ont quitté la liste des inventaires');
+  // « Physique (compté) » est l'en-tête demandé par l'officine (au lieu de « Compté »).
+  for (const colonne of ['<th>Médicament</th>', '<th className="num">Théorique</th>',
+    '<th className="num">Physique (compté)</th>', '<th className="num">Écart</th>',
+    '<th>Justification</th>', '<th>Date</th>']) {
+    assert.ok(inventaires.includes(colonne), `① 2.7.80 — colonne de la liste : ${colonne}`);
   }
+  assert.ok(inventaires.includes('inventaire.lines || []') && inventaires.includes('inventaire.createdAt'),
+    '① 2.7.80 : la liste empile les lignes de l’inventaire (comme l’historique de transfert)');
+  // 2.7.80 — ② comptage : la colonne « Lot » a QUITTÉ le tableau « Ouvrir un inventaire »…
+  const compter = inventaires.slice(inventaires.indexOf('{comptage ? ('));
+  assert.ok(compter.includes('<th>Réception (reçu le)</th>')
+    && !compter.split('</thead>')[0].includes('<th>Lot</th>'),
+    '① 2.7.80 : la colonne « Lot » a disparu du tableau de comptage (« Réception » conservée)');
   assert.ok(stock_inventory_prefill(inventaires), '① le comptage arrive PRÉ-REMPLI avec le théorique');
   assert.ok(inventaires.includes('>Compter</Btn>') && inventaires.includes('>Feuille</Btn>'),
     '① « Compter » (brouillon) et « Feuille » (imprimable) conservés');
 
   // ── ② TRANSFERTS : colonnes + CORRECTION avec workflow administrateur. ───
-  assert.ok(transferts.includes("{ label: 'Quantité transférée', num: true }"),
-    '② colonne « Quantité » renommée « Quantité transférée »');
-  assert.ok(transferts.includes("{ label: 'Stock Final', num: true }"),
-    '② nouvelle colonne « Stock Final » (stock comptoir lu en direct)');
+  // 2.7.80 — repères réécrits : « Quantité transférée » CENTRÉE ; « Stock Final »
+  // = ce qui reste AU DÉPÔT (réserve), pas le comptoir.
+  assert.ok(transferts.includes("{ label: 'Quantité transférée', center: true }"),
+    '② colonne « Quantité » renommée « Quantité transférée », centrée (2.7.80)');
+  assert.ok(transferts.includes("{ label: 'Stock Final', num: true }")
+    && transferts.includes('stockFinalDepot') && transferts.includes("lot.location !== 'DEPOT'"),
+    '② « Stock Final » = stock AU DÉPÔT (réserve) lu en direct (2.7.80)');
   assert.ok(transferts.includes('state=et-stock « sur la période »'.length ? 'transfert(s) sur la période' : ''),
     '② la carte liste par période est conservée');
   assert.ok(transferts.includes("style={COULEUR_DETAIL} icon={SquarePen}")
@@ -3208,8 +3209,8 @@ test('2.7.79 — historique d’inventaire · corrections de transfert · « Ser
   assert.ok(migration.includes('transfer_corrections') && migration.includes("status = 'PENDING'"),
     '⑥ migration 014 : table transfer_corrections (index unique en attente)');
 
-    // ⑦ Version affichée partout (repère générique : au moins 2.7.79).
-  assert.ok(/VERSION_APPLI = '2\.(7\.(79|[8-9]\d)|[89])/.test(version),
+  // ⑦ Version affichée partout (repère générique : au moins 2.7.79).
+  assert.ok(/VERSION_APPLI = '2\.(7\.(79|[8-9]\d|\d{3,})|[89])/.test(version),
     'version.js : version ≥ 2.7.79');
 
   // Petit utilitaire local : le comptage d'inventaire pré-rempli (théorique).
@@ -3219,6 +3220,21 @@ test('2.7.79 — historique d’inventaire · corrections de transfert · « Ser
   }
 });
 
+// ============================================================================
+// 2.7.80 — RETOUCHE « DÉPÔT » (demande de l'officine) :
+//   ① LISTE DES INVENTAIRES directement au contenu compté : colonnes
+//     Médicament · Théorique · Physique (compté) · Écart · Justification · Date
+//     (médicaments empilés, comme l'historique de transfert) ; « Référence »,
+//     « Périmètre » et « Lots comptés » QUITTENT l'écran, ainsi que le bouton
+//     « Détail » (la boîte d'historique n'a plus lieu d'être). Le tableau de
+//     bord du dépôt transporte les lignes d'inventaire avec chaque session.
+//   ② « OUVRIR UN INVENTAIRE » : la colonne « Lot » quitte le tableau de
+//     comptage (réception date-only conservée).
+//   ③ CORRECTION DE TRANSFERT RÉPARÉE : « intact » ne regarde QUE les
+//     mouvements POSTÉRIEURS au transfert — la réception d'origine du lot
+//     (antérieure) ne bloque plus la modification.
+//   ④ « STOCK FINAL » dans l'historique de transfert s'affiche au DÉPÔT
+//     (stock de la réserve) ; « Quantité transférée » est CENTRÉE.
 // ============================================================================
 test('2.7.80 — inventaires au contenu compté · comptage sans « Lot » · correction transfert réparée · stock final au dépôt', () => {
   const lire = chemin => readFileSync(join(racine, ...chemin), 'utf8');
@@ -3280,10 +3296,23 @@ test('2.7.80 — inventaires au contenu compté · comptage sans « Lot » · co
     && serviceTableau.includes('...inventaire,\n    lines: lignesParInventaire.get(inventaire.id) || []'),
     '⑥ lignes d’inventaire embarquées dans le payload du tableau de bord');
 
-    // ⑦ Version affichée partout (repère générique : au moins 2.7.80).
-  assert.ok(/VERSION_APPLI = '2\.(7\.(8\d)|[89])/.test(version),
+  // ⑦ Version affichée partout (repère générique : au moins 2.7.80, toutes
+  //    les 2.7.xx à deux chiffres comprises — « 8\d » s'arrêtait à 2.7.89).
+  assert.ok(/VERSION_APPLI = '2\.(7\.\d{2,}|[89])/.test(version),
     'version.js : version ≥ 2.7.80');
 });
+
+// ============================================================================
+// 2.7.81 — RETOUCHE « DÉPÔT » (suite immédiate de 2.7.80, retour d'officine) :
+//   ① LIGNES ALIGNÉES : la classe utilitaire générique « .center »
+//     (display: grid, hors tableaux) transformait le <td className="center"> en
+//     grille — la colonne « Quantité transférée » flottait au milieu de la
+//     hauteur au lieu de suivre la ligne. « table.data .center » impose
+//     désormais table-cell.
+//   ② CORRECTION DIAGNOSTIQUE : la garde « transfert intact » LISTE le
+//     mouvement qui bloque (type, date, numéro de lot) au lieu de l'opacité
+//     « un de ses lots a déjà bougé » — savoir POURQUOI, pas juste que ça
+//     refuse.
 // ============================================================================
 test('2.7.81 — lignes « Quantité transférée » alignées · correction de transfert diagnostique', () => {
   const lire = chemin => readFileSync(join(racine, ...chemin), 'utf8');
@@ -3308,7 +3337,7 @@ test('2.7.81 — lignes « Quantité transférée » alignées · correction de 
   assert.ok(serviceCorrection.includes('createdAt: { [Op.gt]: transfer.createdAt }'),
     '③ correctif temporel 2.7.80 conservé');
 
-   // ④ Version affichée partout.
+  // ④ Version affichée partout.
   assert.match(version, /'2\.7\.(8[1-9]|[1-9]\d+)'/, 'version.js : pas en dessous de 2.7.81');
 });
 
@@ -3374,8 +3403,8 @@ test('2.7.82 — modal sans « Du/Au » · ordonnance aérée avec « Servi par 
   assert.ok(patientsPage.includes("{ label: 'Date de sortie' }") && patientsPage.includes('dateFr(patient.dischargedOn)'),
     '⑤ liste des patients : colonne « Date de sortie » (automatique)');
 
-  // Version affichée partout.
-  assert.ok(version.includes("'2.7.82'"), 'version.js : 2.7.82');
+  // Version affichée partout (repère générique : au moins 2.7.82).
+  assert.match(version, /'2\.7\.(8[2-9]|[1-9]\d+)'/, 'version.js : pas en dessous de 2.7.82');
 });
 
 // ============================================================================
@@ -3394,8 +3423,8 @@ test('2.7.83 — réception : 9 unités de gestion · transfert : « Détail » 
   const version = lire(['backend', 'src', 'utils', 'version.js']);
 
   // ① Liste déroulante enrichie au dépôt.
-  assert.ok(reception.includes(
-    "const UNITES_GESTION = ['boîte', 'plaquette', 'flacon', 'comprimé', 'ampoule', 'rouleau', 'carton', 'ml', 'cm'];"),
+  assert.ok(reception.match(
+    /const UNITES_GESTION = \['boîte', 'plaquette', 'flacon', 'comprimé', 'ampoule', 'rouleau', 'carton'/) /* 2.7.94 : liste enrichie (sachet, pièce) — préfixe épinglé */,
     '① UNITES_GESTION : Boîte, Plaquette, Flacon, Comprimé, Ampoule, Rouleau, Carton, ml, cm');
   assert.ok(reception.includes('UNITES_GESTION.map(u =>'),
     '① la liste déroulante « Unité de gestion » puise toujours dans cette table');
@@ -3410,6 +3439,742 @@ test('2.7.83 — réception : 9 unités de gestion · transfert : « Détail » 
   assert.ok(transferts.includes("import { COULEUR_DETAIL, COULEUR_IMPRIMER } from '../components/SaleHistoryModal.jsx'"),
     '② les deux tons sont importés pour la même page');
 
+  // Version affichée partout (repère générique : au moins 2.7.83).
+  assert.match(version, /'2\.7\.(8[3-9]|[1-9]\d+)'/, 'version.js : pas en dessous de 2.7.83');
+});
+
+// ============================================================================
+// 2.7.84 — PRÉSENTATION PAR FICHE + CONDITIONNEMENT GÉNÉRALISÉ (grande
+//   refonte, demande du dépôt et du comptoir) :
+//   ① « Nouvelle réception » : Médicament (nom de base) + PRÉSENTATION
+//     (« Flacon 250 ml », « Boîte de 100 gants taille M »…) — chaque
+//     présentation est une fiche à part (jamais mélangées dans le stock) ;
+//     présentation inconnue → fiche CRÉÉE automatiquement à la validation ;
+//   ② CHAÎNE DE CONDITIONNEMENT saisie à la réception et MÉMORISÉE sur la
+//     fiche (« 1 carton = 100 boîtes », « 1 flacon = 250 ml »…) : la quantité
+//     et le prix se saisissent en UNITÉ D'ACHAT, le serveur convertit en
+//     unité de gestion ;
+//   ③ CAISSE : toute unité de la chaîne sous l'unité de gestion est vendable
+//     (plaquette, comprimé, ml, cm…) — plus seulement BOX/BLISTER/UNIT ;
+//   ④ tickets, ordonnances et historiques affichent les unités brutes avec
+//     les bons pluriels (« flacons », « rouleaux », « ml »…).
+// ============================================================================
+test('2.7.84 — présentation par fiche · conversion achat→gestion · vente par toute unité de la chaîne', async () => {
+  const lire = chemin => readFileSync(join(racine, ...chemin), 'utf8');
+  const migration = lire(['backend', 'sql', '015_presentation_par_variante_conditionnement.sql']);
+  const modele = lire(['backend', 'src', 'models', 'product.model.js']);
+  const conditionnement = lire(['backend', 'src', 'utils', 'conditionnement.js']);
+  const serviceReception = lire(['backend', 'src', 'services', 'receipt.service.js']);
+  const serviceVente = lire(['backend', 'src', 'services', 'sale.service.js']);
+  const validateurReception = lire(['backend', 'src', 'validators', 'receipt.validator.js']);
+  const validateurVente = lire(['backend', 'src', 'validators', 'sale.validator.js']);
+  const formulaire = lire(['frontend', 'src', 'forms', 'ReceiptForm.jsx']);
+  const caisse = lire(['frontend', 'src', 'pages', 'SalesPage.jsx']);
+  const unitesFront = lire(['frontend', 'src', 'utils', 'unites.js']);
+  const historique = lire(['frontend', 'src', 'components', 'SaleHistoryModal.jsx']);
+  const ticket = lire(['backend', 'src', 'templates', 'saleTicket.js']);
+  const version = lire(['backend', 'src', 'utils', 'version.js']);
+
+  // ── ① PRÉSENTATION : jamais de mélange, fiche créée au fil de la réception.
+  assert.ok(migration.includes('packaging') && migration.includes('purchase_unit'),
+    '① migration 015 : packaging + purchase_unit sur products');
+  assert.ok(modele.includes('packaging:') && modele.includes('purchaseUnit:'),
+    '① le modèle produit porte la chaîne et l’unité d’achat');
+  assert.ok(serviceReception.includes('resoudreProduitPresentation')
+    && serviceReception.includes('prochainCodeProduit'),
+    '① serveur : le couple (nom + présentation) inconnu CRÉE la fiche automatiquement');
+  assert.ok(formulaire.includes('label="Présentation"') && formulaire.includes('sera créée automatiquement'),
+    '① formulaire : champ « Présentation » + mention de création automatique');
+  assert.ok(formulaire.includes('ficheDe(ligne.baseName, presentation)'),
+    '① la fiche est identifiée par le couple (nom de base, présentation)');
+
+  // ── ② CONDITIONNEMENT : chaîne saisie à la réception, mémorisée, calculée.
+  assert.ok(conditionnement.includes('facteurVers') && conditionnement.includes('chaineEffective'),
+    '② utilitaire partagé : facteurs le long de la chaîne');
+  assert.ok(serviceReception.includes('convertirLigneEnGestion')
+    && serviceReception.includes('combien de « ${gestion} »'),
+    '② serveur : conversion achat → gestion, erreur claire si le maillon manque');
+  assert.ok(validateurReception.includes('maillonConditionnement')
+    && validateurReception.includes('purchaseUnit')
+    && validateurReception.includes('baseName') && validateurReception.includes('presentation'),
+    '② validateur réception : baseName/presentation/purchaseUnit/conversions acceptés');
+  assert.ok(formulaire.includes('Ajouter un niveau') && formulaire.includes('Conversion manquante')
+    && formulaire.includes('entreront en stock'),
+    '② formulaire : éditeur de maillons + aperçu vivant achat → gestion');
+  // Les grandes règles existantes tiennent toujours.
+  assert.ok(formulaire.match(/const UNITES_GESTION = \['boîte', 'plaquette', 'flacon', 'comprimé', 'ampoule', 'rouleau', 'carton'/) /* 2.7.94 : liste enrichie (sachet, pièce) — préfixe épinglé */,
+    '② les 9 unités de gestion (2.7.83) servent aussi aux unités d’achat');
+  assert.ok(formulaire.includes('proposerCorrection') && formulaire.includes('Motif de la correction'),
+    '② le workflow correction de réception (2.7.34) est intact');
+
+  // ── ③ CAISSE : toute unité de la chaîne sous l'unité de gestion.
+  assert.ok(!validateurVente.includes('z.enum(SALE_UNITS'),
+    '③ validateur vente : saleUnit n’est plus un enum fermé (2.7.84)');
+  assert.ok(serviceVente.includes('saleUnitCanonique') && serviceVente.includes('facteurVers(chaine'),
+    '③ serveur vente : unité traduite et facteur lu dans la chaîne');
+  assert.ok(caisse.includes('unitesVendables(produit)') && unitesFront.includes('unitesVendables'),
+    '③ caisse : les chips d’unité viennent de la chaîne du médicament');
+  assert.ok(caisse.includes("code: 'BLISTER'"),
+    '③ les codes historiques BOX/BLISTER/UNIT restent le repli des fiches sans chaîne');
+
+  // ── ④ DOCUMENTS : unités brutes partout, avec les bons pluriels.
+  assert.ok(ticket.includes('libelleUnite') && ticket.includes('pluraliseUnite'),
+    '④ ticket : unités brutes (« ml », « rouleau »…) affichées');
+  assert.ok(historique.includes('libelleQuantiteUnite'),
+    '④ historique de vente : pluriels généralisés (flacons, rouleaux…)');
+
+  // ── ⑤ LOGIQUE RÉELLE : la chaîne CALCULE correctement les conversions. ──
+  const { facteurVers, chaineEffective, saleUnitCanonique, pluraliseUnite } =
+    await import('../../src/utils/conditionnement.js');
+  // Exemple du dépôt : 1 carton = 100 boîtes ; 1 boîte = 10 plaquettes ;
+  // 1 plaquette = 10 comprimés.
+  const chaine = [['carton', 'boîte', 100], ['boîte', 'plaquette', 10], ['plaquette', 'comprimé', 10]];
+  assert.equal(facteurVers(chaine, 'carton', 'comprimé'), 10000, '1 carton = 10 000 comprimés');
+  assert.equal(facteurVers(chaine, 'carton', 'boîte'), 100, '1 carton = 100 boîtes');
+  assert.equal(facteurVers(chaine, 'boîte', 'comprimé'), 100, '1 boîte = 100 comprimés');
+  assert.equal(facteurVers(chaine, 'carton', 'flacon'), null, 'pas de chemin → null (conversion exigée)');
+  assert.equal(facteurVers(chaine, 'boîte', 'boîte'), 1, 'même unité → facteur 1');
+  // Liquides et longueurs : contenance / longueur sont des maillons.
+  assert.equal(facteurVers([['flacon', 'ml', 250]], 'flacon', 'ml'), 250, '« Flacon 250 ml » : 1 flacon = 250 ml');
+  assert.equal(facteurVers([['rouleau', 'cm', 500]], 'rouleau', 'cm'), 500, '1 rouleau de 5 m = 500 cm');
+  // Fiche historique sans chaîne : l'ancien réglage 10/10 fait le relais.
+  const ancienneFiche = { unit: 'boîte', blistersPerBox: 10, unitsPerBlister: 10, packaging: '' };
+  assert.equal(facteurVers(chaineEffective(ancienneFiche), 'boîte', 'comprimé'), 100,
+    'fiche 2.7.12 sans chaîne : le facteur boîte→comprimé reste 100');
+  // Traduction caisse : BOX → unité de gestion, quel que soit son nom.
+  assert.equal(saleUnitCanonique({ unit: 'flacon', packaging: '[["flacon","ml",250]]' }, 'BOX'), 'flacon',
+    'BOX = l’unité de gestion du produit, même si ce n’est pas une boîte');
+  assert.equal(saleUnitCanonique({ unit: 'boîte', packaging: JSON.stringify(chaine) }, 'UNIT'), 'comprimé',
+    'UNIT → comprimé quand la chaîne en comporte');
+  // Pluriels : « rouleaux », « ml » invariable, « flacons ».
+  assert.equal(pluraliseUnite('rouleau', 3), 'rouleaux', 'pluriel : rouleaux');
+  assert.equal(pluraliseUnite('ml', 500), 'ml', 'ml est invariable');
+  assert.equal(pluraliseUnite('flacon', 2), 'flacons', 'pluriel : flacons');
+
   // Version affichée partout.
-  assert.ok(version.includes("'2.7.83'"), 'version.js : 2.7.83');
+  assert.ok(/'(2\.7\.8[4-9]|2\.7\.(9\d|\d{3,})|2\.[89])/.test(version), 'version.js : 2.7.84 ou plus');
+});
+
+test('2.7.85 — réception : champ catégorie de retour · présentation affichée (réception + stock)', async () => {
+  const lire = chemin => readFileSync(join(racine, ...chemin), 'utf8');
+  const formulaire = lire(['frontend', 'src', 'forms', 'ReceiptForm.jsx']);
+  const validateur = lire(['backend', 'src', 'validators', 'receipt.validator.js']);
+  const service = lire(['backend', 'src', 'services', 'receipt.service.js']);
+  const contexte = lire(['frontend', 'src', 'context', 'DataContext.jsx']);
+  const receptions = lire(['frontend', 'src', 'pages', 'ReceiptsPage.jsx']);
+  const lots = lire(['frontend', 'src', 'pages', 'LotsPage.jsx']);
+  const fiche = lire(['frontend', 'src', 'pages', 'FicheStockTab.jsx']);
+  const version = lire(['backend', 'src', 'utils', 'version.js']);
+
+  // ① Champ « Catégorie » de retour dans le formulaire de réception :
+  //    pré-rempli au choix du médicament, envoyé au serveur, enregistré à la
+  //    création d'une nouvelle présentation.
+  assert.ok(formulaire.includes('label="Catégorie"'), 'ReceiptForm : champ « Catégorie » présent');
+  assert.ok(formulaire.includes('— sans catégorie —'), 'ReceiptForm : option vide de catégorie');
+  assert.ok(formulaire.includes('categories.filter(c =>'), 'ReceiptForm : liste des catégories branchée');
+  assert.ok(formulaire.includes('categoryId: \'\''), 'ReceiptForm : ligneVide porte categoryId');
+  assert.ok(formulaire.includes('categoryId: ligne.categoryId ? Number(ligne.categoryId) : undefined'),
+    'ReceiptForm : categoryId envoyé au serveur dans la ligne');
+  assert.ok(formulaire.includes('(unique || fiches[0])?.categoryId'),
+    'ReceiptForm : catégorie pré-remplie depuis les fiches du même nom');
+
+  // ② Serveur : colonne acceptée et écrite à la création de la fiche.
+  assert.ok(validateur.includes('categoryId: identifier.optional()'),
+    'validator : categoryId accepté dans la ligne de réception');
+  assert.ok(service.includes("import { Receipt, ReceiptLine, Lot, Product, Supplier, Category }"),
+    'receipt.service : modèle Category importé');
+  assert.ok(service.includes('Catégorie inconnue'), 'receipt.service : catégorie vérifiée');
+  assert.ok(service.includes('categoryId,') && service.includes('2.7.85'),
+    'receipt.service : categoryId écrit sur la fiche créée');
+
+  // ③ Présentation affichée : helper commun + les écrans réception et stock.
+  assert.ok(contexte.includes('productLabel: id =>') && contexte.includes('— ${trouve.presentation}'),
+    'DataContext : productLabel (nom + présentation) exposé');
+  assert.ok(receptions.includes('productLabel('), 'ReceiptsPage : présentation affichée');
+  assert.ok(lots.includes('productName(lot.productId)') && lots.includes('product(lot.productId)?.presentation'),
+    'LotsPage : présentation affichée (2.7.85), sous le nom (2.7.86)');
+  assert.ok(lots.includes('— ${product.presentation}'), 'LotsPage : filtre médicament avec présentation');
+  assert.ok(fiche.includes('etiquetteMedicament'), 'FicheStockTab : présentation dans le registre');
+
+  // ④ Les épingles antérieures vivent encore : pins conservés.
+  assert.ok(formulaire.includes('label="Présentation"'), 'ReceiptForm : champ présentation toujours présent (2.7.84)');
+  assert.ok(formulaire.includes('Stock actuel au dépôt :'), 'ReceiptForm : hint stock conservé (2.7.31)');
+  assert.ok(/'(2\.7\.8[5-9]|2\.7\.(9\d|\d{3,})|2\.[89])/.test(version), 'version.js : 2.7.85 ou plus');
+});
+
+test('2.7.86 — présentation EMPILÉE sous le nom (stock dépôt, lots, réception)', async () => {
+  const lire = chemin => readFileSync(join(racine, ...chemin), 'utf8');
+  const fiche = lire(['frontend', 'src', 'pages', 'FicheStockTab.jsx']);
+  const lots = lire(['frontend', 'src', 'pages', 'LotsPage.jsx']);
+  const receptions = lire(['frontend', 'src', 'pages', 'ReceiptsPage.jsx']);
+  const version = lire(['backend', 'src', 'utils', 'version.js']);
+
+  // Affichage en DEUX lignes : nom en gras, présentation grisée EN DESSOUS
+  // (demande expresse du dépôt, d'après la capture d'écran).
+  const empile = texte => texte.includes('className="muted" style={{ fontSize: \'.78rem\' }}');
+  assert.ok(fiche.includes('etiquetteMedicament') && empile(fiche),
+    'FicheStockTab : présentation sous le nom dans le registre');
+  assert.ok(lots.includes('productName(lot.productId)') && empile(lots),
+    'LotsPage : présentation sous le nom dans « Lots & stock »');
+  assert.ok(receptions.includes('productName(ligne.productId)') && empile(receptions),
+    'ReceiptsPage : présentation sous le nom (liste + corrections)');
+  assert.ok(receptions.includes('productLabel('), 'ReceiptsPage : recherche conserve le texte complet');
+
+  assert.ok(/'(2\.7\.8[6-9]|2\.7\.(9\d|\d{3,})|2\.[89])/.test(version), 'version.js : 2.7.86 ou plus');
+});
+
+test('2.7.87 — stock dépôt : colonne « Médicament » calquée sur le Catalogue (présentation sous le nom)', async () => {
+  const lire = chemin => readFileSync(join(racine, ...chemin), 'utf8');
+  const fiche = lire(['frontend', 'src', 'pages', 'FicheStockTab.jsx']);
+  const lots = lire(['frontend', 'src', 'pages', 'LotsPage.jsx']);
+  const receptions = lire(['frontend', 'src', 'pages', 'ReceiptsPage.jsx']);
+  const catalogue = lire(['frontend', 'src', 'pages', 'ProductsPage.jsx']);
+  const version = lire(['backend', 'src', 'utils', 'version.js']);
+
+  // Le style de référence est celui du CATALOGUE (ProductsPage) :
+  assert.ok(catalogue.includes("<strong>{produit.name}</strong>")
+    && catalogue.includes("fontSize: '.78rem'"), 'Catalogue : modèle « nom + présentation dessous »');
+
+  // Fiche de stock (dépôt/pharmacie) : MÊME affichage — nom en gras,
+  // présentation grisée EN DESSOUS ; produit retrouvé par son CODE (toujours
+  // présent dans la ligne du rapport) avec repli sur le nom.
+  assert.ok(fiche.includes("<strong>{ligne['Médicament']}</strong>"), 'FicheStockTab : nom en gras');
+  assert.ok(fiche.includes("fontSize: '.78rem'"), 'FicheStockTab : présentation grisée dessous (style Catalogue)');
+  assert.ok(fiche.includes('x.code === ligne.Code') && fiche.includes("x.name === ligne['Médicament']"),
+    'FicheStockTab : lookup par code + repli par nom (robuste, colonne Code affichée ou non)');
+  assert.ok(fiche.includes('{etiquetteMedicament(ligne)}'), 'FicheStockTab : cellule Médicament branchée');
+
+  // Lots & stock + Réceptions : MÊME style pour harmoniser toutes les tables.
+  assert.ok(lots.includes("fontSize: '.78rem'"), 'LotsPage : style aligné sur le Catalogue');
+  assert.ok(receptions.includes("fontSize: '.78rem'"), 'ReceiptsPage : style aligné sur le Catalogue');
+
+  assert.ok(/'(2\.7\.8[7-9]|2\.7\.(9\d|\d{3,})|2\.[89])/.test(version), 'version.js : 2.7.87 ou plus');
+});
+
+test('2.7.88 — fiche de stock (ReportsPage) : présentation sous le nom, recherche par présentation', async () => {
+  const lire = chemin => readFileSync(join(racine, ...chemin), 'utf8');
+  const rapports = lire(['frontend', 'src', 'pages', 'ReportsPage.jsx']);
+  const version = lire(['backend', 'src', 'utils', 'version.js']);
+
+  // LA page que voit le dépôt (« Stock ») est ReportsPage.jsx — c'est ELLE qui
+  // affiche « N médicament(s) sur la période », les Totaux et « Télécharger ».
+  assert.ok(rapports.includes("import { useData } from '../context/DataContext.jsx'"),
+    'ReportsPage : useData branché (accès aux fiches produits)');
+  assert.ok(rapports.includes('const { products } = useData();'),
+    'ReportsPage : fiches produits chargées');
+  assert.ok(rapports.includes('const produitDe = ligne =>')
+    && rapports.includes('p.code === ligne.Code')
+    && rapports.includes("p.name === ligne['Médicament']"),
+    'ReportsPage : fiche retrouvée par CODE (colonne masquée mais présente) + repli nom');
+
+  // La cellule « Médicament » : nom en gras + présentation DESSOUS (.78rem),
+  // le style exact du Catalogue — dans la fonction cellule() générique, donc
+  // valable dans la vue registre ET la vue détaillée (Boîte/Plaquette).
+  assert.ok(rapports.includes("if (colonne === 'Médicament')"), 'ReportsPage : colonne Médicament interceptée');
+  assert.ok(rapports.includes('<strong>{valeur}</strong>')
+    && rapports.includes('{prod?.presentation'), 'ReportsPage : nom gras + présentation empilée');
+  assert.ok(rapports.includes("fontSize: '.78rem'"), 'ReportsPage : style calqué sur le Catalogue');
+
+  // La recherche du tableau trouve AUSSI la présentation (« 250 ml »…).
+  assert.ok(rapports.includes("produitDe(ligne)?.presentation || '').toLowerCase().includes(needle)"),
+    'ReportsPage : recherche par présentation');
+
+  // Ordre des déclarations : produitDe AVANT la liste filtrée (pas de TDZ).
+  assert.ok(rapports.indexOf('const produitDe = ligne =>') < rapports.indexOf('const lignes = useMemo'),
+    'ReportsPage : produitDe déclaré avant le useMemo');
+
+  assert.ok(/'(2\.7\.8[8-9]|2\.7\.(9\d|\d{3,})|2\.[89])/.test(version), 'version.js : 2.7.88 ou plus');
+});
+
+test('2.7.89 — Catalogue : champ « Présentation » retiré du formulaire, valeur conservée (vient de la réception)', async () => {
+  const lire = chemin => readFileSync(join(racine, ...chemin), 'utf8');
+  const ficheForm = lire(['frontend', 'src', 'forms', 'ProductForm.jsx']);
+  const catalogue = lire(['frontend', 'src', 'pages', 'ProductsPage.jsx']);
+  const version = lire(['backend', 'src', 'utils', 'version.js']);
+
+  // ① Le formulaire de fiche médicament (Catalogue) ne contient PLUS de champ
+  //    de saisie « Présentation » : elle se règle uniquement à la réception.
+  assert.ok(!ficheForm.includes('<Field label="Présentation">'),
+    'ProductForm : le champ « Présentation » n’est plus affiché');
+  assert.ok(ficheForm.includes('2.7.89') && ficheForm.includes('RÉCEPTION'),
+    'ProductForm : retrait expliqué (elle vient de la réception)');
+
+  // ② La présentation reste CONSERVÉE : présente dans l'état et renvoyée au
+  //    serveur — modifier la désignation n'efface jamais la présentation reçue.
+  assert.ok(ficheForm.includes("presentation: values.presentation || ''"),
+    'ProductForm : la valeur de la fiche est renvoyée telle quelle au serveur');
+  assert.ok(ficheForm.includes("presentation: ''"), 'ProductForm : état initial conserve la clé');
+
+  // ③ La colonne Catalogue continue d'afficher la présentation (sous le nom),
+  //    alimentée automatiquement par les réceptions.
+  assert.ok(catalogue.includes("produit.presentation"), 'Catalogue : présentation toujours affichée');
+
+  // ④ Non-régression : le champ « Présentation » appartient à la RÉCEPTION.
+  const reception = lire(['frontend', 'src', 'forms', 'ReceiptForm.jsx']);
+  assert.ok(reception.includes('label="Présentation"'), 'ReceiptForm : le champ y vit (2.7.84)');
+
+  assert.ok(/'(2\.7\.(89|9\d|\d{3,})|2\.[89])/.test(version), 'version.js : 2.7.89 ou plus (3 chiffres acceptés — 2.7.100)');
+});
+
+test('2.7.90 — réception : ADOPTION de la fiche du Catalogue (plus de doublon à 0) + unité vide puis fixée par la réception', async () => {
+  const lire = chemin => readFileSync(join(racine, ...chemin), 'utf8');
+  const service = lire(['backend', 'src', 'services', 'receipt.service.js']);
+  const validateur = lire(['backend', 'src', 'validators', 'reference.validator.js']);
+  const ficheForm = lire(['frontend', 'src', 'forms', 'ProductForm.jsx']);
+  const reception = lire(['frontend', 'src', 'forms', 'ReceiptForm.jsx']);
+  const version = lire(['backend', 'src', 'utils', 'version.js']);
+
+  // ① ADOPTION : une fiche du Catalogue connue par son seul nom (présentation
+  //    vide) accueille la première présentation saisie à la réception — fini
+  //    le doublon qui laissait la fiche d'origine à 0.
+  assert.ok(service.includes('2.7.90') && service.includes('ADOPTION'),
+    'receipt.service : adoption expliquée');
+  assert.ok(service.includes('ficheSansPresentation') && service.includes("!String(p.presentation || '').trim()"),
+    'receipt.service : recherche de la fiche du même nom SANS présentation');
+  assert.ok(service.includes('adoptee.update') && service.includes('presentation,'),
+    'receipt.service : la présentation saisie est écrite sur la fiche adoptée');
+
+  // ② Unité de gestion : une fiche SANS unité (Catalogue) la reçoit de la
+  //    première réception — conversion calculée vers l'unité demandée…
+  //    2.7.97 : pin réécrite — l'écran ne verrouille plus l'unité, le repli
+  //    vers l'unité demandée reste (`demandee || existante`) et la pose
+  //    n'est plus conditionnée par l'ancien refus (champ jamais verrouillé).
+  assert.ok(service.includes('demandee || existante'),
+    'receipt.service : repli de l’unité de gestion vers l’unité demandée (fiche sans unité)');
+  assert.ok(!service.includes('l’unité de gestion ne se change plus à la réception.'),
+    'receipt.service : l’ancien refus a disparu (unité changeable, 2.7.97)');
+
+  // ③ Création au Catalogue : unité VIDE (Stock vide jusqu'à la réception) ;
+  //    le validateur accepte '' ; la modification conserve la valeur existante.
+  assert.ok(validateur.includes("unit: z.string().trim().max(40).default('')"),
+    'validateur : unité vide acceptée à la création (plus de « boîte » par défaut)');
+  assert.ok(ficheForm.includes("unit: produit ? (values.unit || '') : ''"),
+    'ProductForm : fiche nouvelle = unité vide, fiche modifiée = valeur conservée');
+
+  //    2.7.97 : pin ④ réécrite — plus aucun verrouillage par la fiche :
+  //    Catégorie et Unité de gestion ne sont désactivées QU'en mode
+  //    CORRECTION (identité du lot) ; pré-remplies automatiquement sinon.
+  assert.ok(!reception.includes('disabled={Boolean(fiche)'),
+    'ReceiptForm : catégorie et unité ne sont plus verrouillées quand la fiche existe (2.7.97)');
+  assert.ok(reception.includes('son stock grandit (aucune autre fiche créée)'),
+    'ReceiptForm : l’adoption est annoncée à l’écran');
+
+  // ⑤ Migration 016 annoncée : vide l'unité des fiches JAMAIS réceptionnées.
+  const migration = lire(['backend', 'sql', '016_unite_vide_avant_premiere_reception.sql']);
+  assert.ok(migration.includes("SET unit = ''") && migration.includes('NOT EXISTS'),
+    'migration 016 : unité vidée seulement sans lot ni mouvement');
+
+  assert.ok(/'(2\.7\.(90|9\d|\d{3,})|2\.[89])/.test(version), 'version.js : 2.7.90 ou plus (3 chiffres acceptés — 2.7.100)');
+});
+
+test('2.7.91/2.7.92 — registre net (safidy A) : version finale à sa date, annulations hors Entrées/Sorties, journal immuable INTACT', async () => {
+  const lire = chemin => readFileSync(join(racine, ...chemin), 'utf8');
+  const rapports = lire(['backend', 'src', 'services', 'report.service.js']);
+  const corrections = lire(['backend', 'src', 'services', 'transferCorrection.service.js']);
+  const documents = lire(['backend', 'src', 'services', 'document.service.js']);
+  const stock = lire(['backend', 'src', 'services', 'stock.service.js']);
+  const modeleMvt = lire(['backend', 'src', 'models', 'movement.model.js']);
+  const modeleMarque = lire(['backend', 'src', 'models', 'movementSuperseded.model.js']);
+  const indexModeles = lire(['backend', 'src', 'models', 'index.js']);
+  const version = lire(['backend', 'src', 'utils', 'version.js']);
+
+  // ① Marque en base : TABLE SÉPARÉE insert-only « movement_superseded ».
+  //    2.7.92 — la colonne « superseded » de la 1re mouture (2.7.91) exigeait
+  //    un UPDATE des mouvements : REFUSÉ par le trigger « movements_immutable »
+  //    (RG19, sql/001) — migration avortée en transaction, base intacte. La
+  //    marque vit donc HORS du journal : le journal n'est JAMAIS retouché.
+  assert.ok(modeleMarque.includes("export const name = 'MovementSuperseded'")
+    && modeleMarque.includes("export const tableName = 'movement_superseded'"),
+    'movementSuperseded.model : table de marquage dédiée');
+  assert.ok(!modeleMvt.includes('superseded: {type:DataTypes.BOOLEAN'),
+    'movement.model : AUCUNE colonne superseded — journal jamais retouché (RG19)');
+  assert.ok(indexModeles.includes("import * as movementSuperseded from './movementSuperseded.model.js';")
+    && indexModeles.includes('MovementSuperseded,'),
+    'models/index.js : modèle de marquage enregistré');
+  const migration = lire(['backend', 'sql', '017_registre_net_superseded.sql']);
+  assert.ok(migration.includes('CREATE TABLE IF NOT EXISTS movement_superseded'),
+    'migration 017 : table de marquage (idempotente)');
+  assert.ok(migration.includes('INSERT INTO movement_superseded') && migration.includes('ON CONFLICT DO NOTHING'),
+    'migration 017 : passé re-marqué par INSERT rejouable');
+  assert.ok(!/UPDATE\s+movements/i.test(migration),
+    'migration 017 : AUCUN UPDATE du journal immuable');
+
+  // ② Correction de transfert validée : versions supplantées + CANCEL marqués
+  //    par INSERT (ignoreDuplicates = rejouable) ; version corrigée écrite À
+  //    LA DATE DU TRANSFERT.
+  assert.ok(corrections.includes('MovementSuperseded.bulkCreate'),
+    'correction : écritures supplantées marquées (insert-only)');
+  assert.ok(corrections.includes('ignoreDuplicates: true'),
+    'correction : marquage idempotent');
+  assert.ok(!corrections.includes('Movement.update({ superseded'),
+    'correction : plus AUCUN UPDATE des mouvements (trigger RG19)');
+  assert.ok(corrections.includes('documentDate: transfer.createdAt'),
+    'correction : la version corrigée est datée du jour du transfert');
+
+  // ③ Annulation tracée d'un document : originale + contre-mouvements marqués.
+  assert.ok(documents.includes('MovementSuperseded.bulkCreate'),
+    'annulation : document annulé hors du registre (insert-only)');
+  assert.ok(!documents.includes('Movement.update({ superseded'),
+    'annulation : plus AUCUN UPDATE des mouvements');
+
+  // ④ Le registre filtre via la table de marquage : fiche globale (avant +
+  //    entrées + sorties) et fiche produit — le journal « Mouvements », lui,
+  //    continue de TOUT montrer (RG19).
+  assert.ok((rapports.match(/NOT EXISTS \(SELECT 1 FROM movement_superseded/g) || []).length >= 4,
+    'rapports : filtre movement_superseded sur les sous-requêtes des fiches');
+  const blocMouvements = rapports.split('movements: `')[1]?.split('`,')[0] || '';
+  assert.ok(!blocMouvements.includes('superseded'),
+    'rapports : le journal « Mouvements » montre TOUT (audit RG19)');
+
+  // ⑤ applyMovements accepte la date d'écriture (facultative).
+  assert.ok(stock.includes('documentDate = null') && stock.includes('createdAt: documentDate || new Date()'),
+    'stock.service : documentDate reçu et appliqué');
+
+  assert.ok(/(2\.7\.(9\d|\d{3,})|2\.[89])/.test(version), 'version.js : 2.7.9x (pin généralisée)');
+});
+
+test('2.7.93 — transfert dépôt : « nom — présentation » en tête de liste, lot en ligne secondaire, recherche élargie', async () => {
+  const lire = chemin => readFileSync(join(racine, ...chemin), 'utf8');
+  const form = lire(['frontend', 'src', 'forms', 'TransferForm.jsx']);
+  const version = lire(['backend', 'src', 'utils', 'version.js']);
+
+  // ① Le médicament est identifié par productLabel (nom + présentation, 2.7.85)…
+  assert.ok(form.includes('productLabel, settings } = useData()'),
+    'TransferForm : productLabel pris au DataContext (productName n’est plus utilisé)');
+  assert.ok(form.includes('<strong>{productLabel(item.productId)}</strong>'),
+    'TransferForm : ligne principale de chaque suggestion = nom + présentation');
+  assert.ok(!form.includes('<strong>{productName(item.productId)}</strong> · lot {item.number}'),
+    'TransferForm : le n° de lot ne colle PLUS au nom du médicament');
+
+  // ② …le n° de lot descend dans la ligne discrète (muted) juste en dessous.
+  assert.ok(form.includes('lot {item.number}'),
+    'TransferForm : le n° de lot vit dans la ligne secondaire');
+
+  // ③ La recherche entend aussi la présentation, la forme et le dosage.
+  assert.ok(form.includes('produit?.presentation') && form.includes('produit?.form') && form.includes('produit?.dosage'),
+    'recherche : nom + présentation + forme + dosage + code + lot + expiration');
+  assert.ok(form.includes('Rechercher : nom, présentation, code ou n° de lot…'),
+    'placeholder de recherche actualisé');
+
+  // ④ Valeur choisie et options du Select : « Nom — Présentation · lot N° ».
+  assert.ok(form.includes('const etiquetteLot = lot => `${productLabel(lot.productId)} · lot ${lot.number}`;'),
+    'ligne choisie et Select : présentation d’abord, lot ensuite');
+
+  // ⑤ Marque de version dans l’en-tête du fichier.
+  assert.ok(form.includes('2.7.93'), 'en-tête TransferForm : note 2.7.93');
+
+  assert.ok(/(2\.7\.(9\d|\d{3,})|2\.[89])/.test(version), 'version.js : 2.7.9x (pin généralisée)');
+});
+
+test('2.7.94 — dépôt : présentation dans l’historique de transfert ; unités « sachet » et « pièce » (gestion + achat)', async () => {
+  const lire = chemin => readFileSync(join(racine, ...chemin), 'utf8');
+  const transferts = lire(['frontend', 'src', 'pages', 'TransfersPage.jsx']);
+  const reception = lire(['frontend', 'src', 'forms', 'ReceiptForm.jsx']);
+  const version = lire(['backend', 'src', 'utils', 'version.js']);
+
+  // ① Historique de transfert : nom + présentation (productLabel, 2.7.85)
+  //    dans la colonne, la recherche ET la boîte « Détail ».
+  //    2.7.95 : pins réécrites — la présentation s'EMPILE désormais SOUS le
+  //    nom (comme au stock) ; productLabel ne sert plus qu'à la recherche et
+  //    productName est revenu pour la ligne du nom.
+  assert.ok(transferts.includes('productLabel, lots } = useData()'),
+    'TransfersPage : productLabel pris au DataContext');
+  assert.ok(transferts.includes('<strong>{productName(ligne.productId)}</strong>'),
+    'TransfersPage : colonne « Médicament(s) » — nom en gras (présentation empilée, 2.7.95)');
+  assert.ok(transferts.includes("product: productName(ligne.productId),"),
+    'TransfersPage : la boîte « Détail » affiche aussi la présentation (sous le nom, 2.7.95)');
+
+  // ② Unités de gestion ET d’achat : « sachet » et « pièce » dans la liste
+  //    unique qui sert aux deux menus déroulants (2.7.84).
+  //    2.7.96 : pin réécrite — « paire » et « tube » rejoignent à leur tour
+  //    la liste (treize valeurs), toujours au même endroit avant ml/cm.
+  assert.ok(reception.includes(
+    "const UNITES_GESTION = ['boîte', 'plaquette', 'flacon', 'comprimé', 'ampoule', 'rouleau', 'carton', 'sachet', 'pièce', 'paire', 'tube', 'ml', 'cm'];"),
+    'ReceiptForm : UNITES_GESTION enrichie de sachet et pièce (+ paire et tube, 2.7.96)');
+  assert.ok((reception.match(/UNITES_GESTION\.map/g) || []).length >= 4,
+    'ReceiptForm : la liste sert bien aux selects (gestion, achat, chaîne)');
+
+  assert.match(version, /'2\.7\.(9[4-9]|[1-9]\d+)'/, 'version.js : pas en dessous de 2.7.94 (pin généralisée 2.7.95)');
+});
+
+test('2.7.95 — transferts : présentation EMPILÉE sous le nom, comme au stock', () => {
+  const lire = chemin => readFileSync(join(racine, ...chemin), 'utf8');
+  const transferts = lire(['frontend', 'src', 'pages', 'TransfersPage.jsx']);
+  const version = lire(['backend', 'src', 'utils', 'version.js']);
+
+  // ① productName et product rejoignent productLabel dans le useData().
+  assert.ok(transferts.includes('const { documents, refresh, products, product, productName, productLabel, lots } = useData();'),
+    'TransfersPage : product + productName pris au DataContext');
+
+  // ② Colonne « Médicament(s) » : nom en GRAS, présentation en petit grisé
+  //    JUSTE EN DESSOUS — même disposition que le stock (2.7.88) et les
+  //    réceptions (2.7.86). Fini le libellé sur une seule ligne.
+  assert.ok(transferts.includes('<strong>{productName(ligne.productId)}</strong>'),
+    'colonne : nom du médicament en gras');
+  assert.ok(transferts.includes("? <div className=\"muted\" style={{ fontSize: '.78rem' }}>{product(ligne.productId).presentation}</div>"),
+    'colonne : présentation empilée sous le nom en petit grisé');
+  assert.ok(!transferts.includes('<div key={i}><strong>{productLabel(ligne.productId)}</strong></div>'),
+    'colonne : l’ancienne forme sur une seule ligne a disparu');
+
+  // ③ Boîte « Détail » : nom en gras, présentation sur la ligne grisée du
+  //    DocumentModal (avec le code produit s'il existe).
+  assert.ok(transferts.includes('[product(ligne.productId)?.presentation, codeProduit].filter(Boolean).join'),
+    'détail : présentation empilée sous le nom (ligne grisée)');
+
+  // ④ La recherche conserve productLabel : on retrouve toujours un transfert
+  //    par son nom OU sa présentation (« 1000 ml » filtre bien l’Alcool).
+  assert.ok(transferts.includes('.map(ligne => productLabel(ligne.productId)).join('),
+    'recherche : productLabel conservé (nom + présentation filtrables)');
+
+  // ⑤ Repère de version dans l'en-tête du fichier.
+  assert.ok(transferts.includes('2.7.95'), 'en-tête TransfersPage : note 2.7.95');
+
+  assert.match(version, /'2\.7\.(9[5-9]|[1-9]\d+)'/, 'version.js : pas en dessous de 2.7.95 (pin généralisée 2.7.96)');
+});
+
+test('2.7.97 — réception : « Catégorie » et « Unité de gestion » pré-remplies automatiquement, jamais verrouillées', () => {
+  const lire = chemin => readFileSync(join(racine, ...chemin), 'utf8');
+  const reception = lire(['frontend', 'src', 'forms', 'ReceiptForm.jsx']);
+  const service = lire(['backend', 'src', 'services', 'receipt.service.js']);
+  const version = lire(['backend', 'src', 'utils', 'version.js']);
+
+  // ① Plus aucun verrouillage par la fiche : les deux selects ne sont
+  //    désactivés QU'en mode correction (identité du lot), jamais « parce
+  //    que la fiche existe ».
+  assert.ok(!reception.includes('disabled={Boolean(fiche)'),
+    'ReceiptForm : « Catégorie » et « Unité de gestion » jamais verrouillées hors correction');
+  assert.ok((reception.match(/disabled=\{correctionMode\}/g) || []).length >= 2,
+    'ReceiptForm : seul le mode correction conserve le verrouillage');
+
+  // ② Pré-remplissage automatique conservé (depuis la fiche) — hints et
+  //    titles annoncent la répercussion sur la fiche.
+  assert.ok(reception.includes('(unique || fiches[0])?.categoryId') && reception.includes('fiche.unit || ligne.unit'),
+    'ReceiptForm : pré-remplissage automatique catégorie + unité conservé');
+  assert.ok(reception.includes('pré-remplie depuis la fiche') || reception.includes('Pré-remplie depuis la fiche'),
+    'ReceiptForm : le champ annonce qu’il est pré-rempli et modifiable');
+
+  // ③ Serveur : la catégorie choisie à la réception est RÉPERCUTÉE sur la
+  //    fiche existante ou adoptée (auparavant ignorée hors création).
+  assert.ok(service.includes('repercuterCategorie'),
+    'receipt.service : catégorie répercutée sur la fiche existante/adoptée');
+  assert.ok(service.includes('2.7.97'),
+    'receipt.service : note d’historique 2.7.97');
+
+  // ④ Serveur : l'unité changeable — l'ancien refus plat a disparu, remplacé
+  //    par le garde-fou de cohérence avec la chaîne de conditionnement ; le
+  //    report sur la fiche n'est plus bloqué.
+  assert.ok(!service.includes('l’unité de gestion ne se change plus à la réception.'),
+    'receipt.service : l’ancien refus plat a disparu');
+  assert.ok(service.includes('chaineReference.some(m => m.from.toLowerCase() === demandee || m.to.toLowerCase() === demandee)'),
+    'receipt.service : garde-fou — la nouvelle unité doit figurer dans la chaîne');
+  assert.ok(service.includes('await product.update({ unit: line.unit }'),
+    'receipt.service : l’unité choisie est écrite sur la fiche');
+
+  assert.match(version, /'2\.7\.(9[7-9]|[1-9]\d+)'/, 'version.js : pas en dessous de 2.7.97 (pin généralisée 2.7.98)');
+});
+
+test('2.7.96 — unités « paire » (gants) et « tube » (crème) en gestion, achat et chaîne', () => {
+  const lire = chemin => readFileSync(join(racine, ...chemin), 'utf8');
+  const reception = lire(['frontend', 'src', 'forms', 'ReceiptForm.jsx']);
+  const unites = lire(['frontend', 'src', 'utils', 'unites.js']);
+  const version = lire(['backend', 'src', 'utils', 'version.js']);
+
+  // ① Les deux unités rejoignent la liste unique (treize valeurs) à leur
+  //    place logique — après « pièce », avant « ml » et « cm ».
+  assert.ok(reception.includes(
+    "const UNITES_GESTION = ['boîte', 'plaquette', 'flacon', 'comprimé', 'ampoule', 'rouleau', 'carton', 'sachet', 'pièce', 'paire', 'tube', 'ml', 'cm'];"),
+    'UNITES_GESTION : paire et tube présents (treize unités)');
+  assert.ok(reception.includes('2.7.96'),
+    'ReceiptForm : note d’historique 2.7.96');
+
+  // ② La liste unique sert toujours aux trois menus (gestion, achat, chaîne) :
+  //    aucun autre fichier n'a à être touché — dépôt et pharmacie reçoivent
+  //    les deux unités en même temps (vente via la chaîne de conditionnement).
+  assert.ok((reception.match(/UNITES_GESTION\.map/g) || []).length >= 4,
+    'la liste sert aux selects gestion + achat + chaîne (×2)');
+
+  // ③ Le pluriel « paires » / « tubes » est bien couvert par la règle
+  //    générale de pluraliseUnite (aucun cas particulier à ajouter).
+  assert.ok(unites.includes('pluraliseUnite') && unites.includes("return `${u}s`;"),
+    'utils/unites.js : pluriel automatique « paires » / « tubes » (règle générale)');
+
+  assert.match(version, /'2\.7\.(9[6-9]|[1-9]\d+)'/, 'version.js : pas en dessous de 2.7.96 (pin généralisée 2.7.97)');
+});
+
+test('2.7.98 — vente au comptoir : l’unité de vente se choisit en LISTE DÉROULANTE (les chips disparaissent), prix adapté', () => {
+  const lire = chemin => readFileSync(join(racine, ...chemin), 'utf8');
+  const caisse = lire(['frontend', 'src', 'pages', 'SalesPage.jsx']);
+  const serviceVente = lire(['backend', 'src', 'services', 'sale.service.js']);
+  const version = lire(['backend', 'src', 'utils', 'version.js']);
+
+  // ① Les chips Boîte / Plaquette / Comprimé ont disparu de la ligne du
+  //    panier : plus de groupe de boutons d'unité, plus de bouton par unité.
+  assert.ok(!caisse.includes('className="vt-unites"'),
+    'SalesPage : la rangée de chips d’unité (vt-unites) a disparu du panier');
+
+  // ② Un menu déroulant natif propose exactement les mêmes unités qu'avant
+  //    (unitesVendables : gestion d'abord, descendants de la chaîne ensuite)
+  //    et le changement passe toujours par changerUnite (plafond recalculé).
+  assert.ok(caisse.includes('aria-label="Unité de vente"'),
+    'SalesPage : select de l’unité de vente présent dans la ligne du panier');
+  assert.ok(caisse.includes('unitesVendables(produit)'),
+    'SalesPage : la liste vient toujours de la chaîne du médicament (2.7.84)');
+  assert.ok(caisse.includes('onChange={e => changerUnite(ligne, e.target.value)}'),
+    'SalesPage : changer l’unité passe par changerUnite (plafond + devis)');
+  // 2.7.99 — pin réécrite : plus aucun suffixe dans le texte des options
+  // (liste nue), l'unité absente de la chaîne est grisée et sa raison ne vit
+  // qu'en title au survol (title sur l'option).
+  assert.ok(caisse.includes('title={desactive ? (chaine') && !caisse.includes("desactive ? ' — conditionnement non renseigné'"),
+    'SalesPage : unité absente de la chaîne = option grisée, raison en title (liste nue 2.7.99)');
+  assert.ok(!caisse.includes('${integer(facteurPossible)} par'),
+    'SalesPage : plus de suffixe « — 10 par boîte » dans les options (2.7.99)');
+
+  // ③ Le prix suit l'unité choisie : le devis est recalculé à chaque
+  //    changement (comportement historique conservé) et le serveur garde le
+  //    prix propre de la fiche (pricePerBlister/pricePerUnit) ou le prorata.
+  assert.ok(caisse.includes('le prix s’adapte automatiquement à l’unité choisie'),
+    'SalesPage : l’écran annonce l’adaptation automatique du prix');
+  assert.ok(serviceVente.includes('pricePerBlister') && serviceVente.includes('pricePerUnit'),
+    'sale.service : prix propres de la fiche toujours prioritaires (proposal 2 accepté)');
+  assert.ok(serviceVente.includes('D(boxPrice).div(facteur)'),
+    'sale.service : à défaut, prorata du prix de l’unité de gestion');
+
+  // ④ Repère de version dans l'en-tête du fichier.
+  assert.ok(caisse.includes('2.7.98'), 'SalesPage : note d’historique 2.7.98');
+
+  assert.match(version, /'2\.7\.(9[8-9]|[1-9]\d+)'/, 'version.js : pas en dessous de 2.7.98');
+});
+
+test('2.7.99 — vente : liste d’unités NUE (nom de l’unité seul, comme l’« Unité d’achat » de la réception)', () => {
+  const lire = chemin => readFileSync(join(racine, ...chemin), 'utf8');
+  const caisse = lire(['frontend', 'src', 'pages', 'SalesPage.jsx']);
+  const version = lire(['backend', 'src', 'utils', 'version.js']);
+
+  // ① Les options du select ne contiennent QUE le nom de l'unité : ni facteur
+  //    « — 10 par boîte », ni suffixe « — conditionnement non renseigné » dans
+  //    le texte affiché (demande du comptoir, capture à l'appui).
+  assert.ok(!caisse.includes('${integer(facteurPossible)} par'),
+    'les options n’affichent plus de facteur (« — 10 par boîte » disparu)');
+  assert.ok(!caisse.includes("desactive ? ' — conditionnement non renseigné'"),
+    'les options n’affichent plus « — conditionnement non renseigné »');
+  assert.ok(caisse.includes('{unite.label}\n'),
+    'le texte de l’option = le nom de l’unité, seul');
+
+  // ② L'unité absente de la chaîne reste non sélectionnable ; sa raison n'est
+  //    plus écrite dans la liste mais visible au survol (title de l'option).
+  assert.ok(caisse.includes('title={desactive ? (chaine'),
+    'option grisée silencieuse : la raison n’apparaît qu’au survol (title)');
+  assert.ok(caisse.includes('Conditionnement non renseigné dans la fiche médicament'),
+    'la raison (title) est conservée pour les fiches sans chaîne');
+
+  // ③ Le reste du comportement 2.7.98 est intact : select natif, même source
+  //    (unitesVendables), changement par changerUnite, prix qui suit l'unité.
+  assert.ok(caisse.includes('aria-label="Unité de vente"')
+    && caisse.includes('unitesVendables(produit)')
+    && caisse.includes('onChange={e => changerUnite(ligne, e.target.value)}'),
+    'le select 2.7.98 est intact (mêmes unités, même mécanique)');
+
+  // ④ Repère de version dans l'en-tête du fichier.
+  assert.ok(caisse.includes('2.7.99'), 'SalesPage : note d’historique 2.7.99');
+
+  assert.match(version, /'2\.7\.(99|\d{3,})'/, 'version.js : pas en dessous de 2.7.99');
+});
+
+test('2.7.100 — vente : liste d’unités COMPLÈTE (les 13 unités du dépôt), non vendables grisées', () => {
+  const lire = chemin => readFileSync(join(racine, ...chemin), 'utf8');
+  const caisse = lire(['frontend', 'src', 'pages', 'SalesPage.jsx']);
+  const unites = lire(['frontend', 'src', 'utils', 'unites.js']);
+  const version = lire(['backend', 'src', 'utils', 'version.js']);
+
+  // ① La liste unique des 13 unités (même contenu que l'« Unité de gestion »
+  //    du dépôt) est déclarée une seule fois, dans utils/unites.js.
+  assert.ok(unites.includes(
+    "export const UNITES_VENTE = ['boîte', 'plaquette', 'flacon', 'comprimé', 'ampoule', 'rouleau', 'carton', 'sachet', 'pièce', 'paire', 'tube', 'ml', 'cm'];"),
+    'unites.js : UNITES_VENTE contient les 13 unités (dans l’ordre du dépôt)');
+
+  // ② unitesVendables renvoie TOUTE la liste avec un drapeau `vendable` :
+  //    chaîne → gestion + descendants ; fiche historique → BOX/BLISTER/UNIT
+  //    selon le conditionnement de la fiche ; le reste = grisé.
+  assert.ok(unites.includes('vendable: nom === gestion || (facteurEntre(conversion, gestion, nom) ?? 0) >= 1'),
+    'unites.js : fiche à chaîne — vendable = gestion ou descendant de la chaîne');
+  assert.ok(unites.includes("if (nom === 'plaquette') return { code: 'BLISTER'")
+    && unites.includes("if (nom === 'comprimé') return { code: 'UNIT'"),
+    'unites.js : fiche historique — repli BOX/BLISTER/UNIT piloté par la fiche (2.7.12 intact)');
+
+  // ③ Le panier affiche chaque option NUE (2.7.99 maintenu) et grise les
+  //    non vendables via le drapeau, raison en title seul.
+  assert.ok(caisse.includes('const desactive = !unite.vendable;'),
+    'SalesPage : option grisée si l’unité n’est pas vendable pour ce médicament');
+  assert.ok(caisse.includes('title={desactive ? (chaine'),
+    'SalesPage : la raison du grisé reste en title au survol (liste nue)');
+  assert.ok(!caisse.includes('${integer(facteurPossible)} par'),
+    'SalesPage : toujours aucun facteur écrit dans la liste (2.7.99 conservé)');
+
+  // ④ La mécanique 2.7.98 est intacte : select natif + changerUnite + prix.
+  assert.ok(caisse.includes('aria-label="Unité de vente"')
+    && caisse.includes('onChange={e => changerUnite(ligne, e.target.value)}')
+    && caisse.includes("le prix s’adapte automatiquement à l’unité choisie"),
+    'SalesPage : select unité de vente + prix adapté intacts (2.7.98)');
+
+  // ⑤ Repère de version dans l'en-tête du fichier.
+  assert.ok(caisse.includes('2.7.100'), 'SalesPage : note d’historique 2.7.100');
+  assert.ok(unites.includes('2.7.100'), 'unites.js : note d’historique 2.7.100');
+
+  assert.match(version, /'2\.7\.(\d{3,})'/, 'version.js : pas en dessous de 2.7.100');
+});
+
+
+test('2.7.101 — transfert, chiffre d’affaires et achats fournisseurs mensuels', () => {
+  const lire = chemin => readFileSync(join(racine, ...chemin), 'utf8');
+  const dashboard = lire(['frontend', 'src', 'pages', 'DashboardPage.jsx']);
+  const menu = lire(['frontend', 'src', 'components', 'Layout.jsx']);
+  const chart = lire(['frontend', 'src', 'components', 'PurchasesHistogram.jsx']);
+  const service = lire(['backend', 'src', 'services', 'dashboard.service.js']);
+  const controller = lire(['backend', 'src', 'controllers', 'dashboard.controller.js']);
+  assert.ok(menu.includes("label: 'Transfert vers pharmacie'"));
+  assert.ok(dashboard.includes('Chiffre d’affaires du mois') && dashboard.includes('Chiffre d’affaires du jour'));
+  assert.ok(dashboard.includes('(estDepot || estAdmin)') && dashboard.includes('<PurchasesHistogram />'));
+  assert.ok(chart.includes('pas les paiements effectués') && chart.includes('length: 12'));
+  const achats = service.slice(service.indexOf('export async function purchasesMonthly'));
+  assert.match(achats, /SUM\(cost_total\)/);
+  assert.match(achats, /FROM receipts/);
+  assert.match(achats, /status = 'VALIDATED'/);
+  assert.ok(controller.includes("!['DEPOT', 'ADMIN'].includes(role)"));
+});
+
+
+test('2.7.102 — modification transfert interdite au pharmacien, autorisée dépôt/admin', () => {
+  const lire = chemin => readFileSync(join(racine, ...chemin), 'utf8');
+  const page = lire(['frontend', 'src', 'pages', 'TransfersPage.jsx']);
+  const ctrl = lire(['backend', 'src', 'controllers', 'transferCorrection.controller.js']);
+  assert.ok(page.includes("const peutProposerCorrection = can('transfer') && ['DEPOT', 'ADMIN'].includes(user?.roleCode)"));
+  assert.ok(page.includes("transfert.status === 'VALIDATED' && peutProposerCorrection"));
+  assert.ok(page.includes('>Détail</Btn>'));
+  const proposer = ctrl.slice(ctrl.indexOf('export async function proposer'), ctrl.indexOf('export async function valider'));
+  assert.ok(proposer.includes("!['DEPOT', 'ADMIN'].includes(role)"));
+  assert.ok(proposer.indexOf('res.status(403)') < proposer.indexOf('await write('));
+});
+
+
+test('2.7.103 — tableaux de bord clairs et histogrammes ventes / flux', () => {
+  const ventes = texteDe('components', 'SalesHistogram.jsx');
+  const flux = texteDe('components', 'DepotFlowChart.jsx');
+  const styles = readFileSync(join(racine, 'frontend', 'src', 'styles.css'), 'utf8');
+  assert.ok(ventes.includes('salesMonthly') && ventes.includes('ventesBarres103') && ventes.includes('[12, 6, 3]'));
+  assert.ok(ventes.includes('Détail accessible par mois') && ventes.includes('role="alert"'));
+  assert.ok(flux.includes('stockFlowMonthly') && flux.includes('zero = 150') && flux.includes('sortiesBarres103'));
+  assert.ok(flux.includes('leur addition mélange des unités différentes') && flux.includes('pas le stock disponible'));
+  assert.ok(styles.includes('maquette claire') && styles.includes('.dhisto__scroll'));
+});
+
+test('2.7.104 — maquette tableau de bord : cartes, raccourcis et tendance réelle', () => {
+  const page = texteDe('pages', 'DashboardPage.jsx');
+  const tendance = texteDe('components', 'DashboardSalesTrend.jsx');
+  const styles = readFileSync(join(racine, 'frontend', 'src', 'styles.css'), 'utf8');
+  assert.ok(page.includes('dboard__overview') && page.includes('dboard__shortcuts'));
+  assert.ok(page.includes('!estDepot ? <DashboardSalesTrend /> : null'));
+  assert.ok(page.includes('<SalesHistogram />') && page.includes('<DepotFlowChart />') && page.includes('<PurchasesHistogram />'));
+  assert.ok(tendance.includes('dashboard.salesCalendar(m)') && tendance.includes('length: 30'));
+  assert.ok(tendance.includes("timeZone: 'Indian/Antananarivo'") && tendance.includes('role="alert"'));
+  assert.ok(styles.includes('2.7.104 — composition proche de la maquette') && styles.includes('.dboard__overview'));
 });

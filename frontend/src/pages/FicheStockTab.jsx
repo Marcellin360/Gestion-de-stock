@@ -77,6 +77,25 @@ export default function FicheStockTab() {
 
   const libelleMagasin = magasin === 'DEPOT' ? 'Dépôt (réserve)' : 'Pharmacie (comptoir)';
 
+  // 2.7.85/2.7.86/2.7.87 — la colonne « Médicament » du registre se comporte
+  // COMME DANS LE CATALOGUE : le nom en gras, et JUSTE EN DESSOUS la
+  // présentation en petit texte grisé (« Alcool » / « Flacon 500 ml ») — la
+  // présentation distingue les fiches jumelles (100 ml, 250 ml, 500 ml…).
+  // Le produit est retrouvé par son CODE : il est TOUJOURS présent dans la
+  // ligne du rapport, même si la colonne « Code » n'est pas affichée à l'écran.
+  const etiquetteMedicament = ligne => {
+    const p = (products || []).find(x => x.code === ligne.Code)
+      || (products || []).find(x => x.name === ligne['Médicament']);
+    return (
+      <>
+        <strong>{ligne['Médicament']}</strong>
+        {p?.presentation
+          ? <div className="muted" style={{ fontSize: '.78rem' }}>{p.presentation}</div>
+          : null}
+      </>
+    );
+  };
+
   // Teboka ⑪ : ouverture de la fiche individuelle d'un médicament — le
   // produit est retrouvé par son code (affiché dans le registre), puis ses
   // mouvements de la période sont demandés au serveur (magasin courant).
@@ -188,7 +207,7 @@ export default function FicheStockTab() {
               {lignes.map((ligne, index) => (
                 <tr key={ligne.Code || index}>
                   <td>{ligne.Code}</td>
-                  <td className="wrap">{ligne['Médicament']}</td>
+                  <td className="wrap">{etiquetteMedicament(ligne)}</td>   {/* 2.7.85 — nom + présentation */}
                   <td className="wrap">{ligne['Catégorie'] || '—'}</td>
                   <td>{ligne['Unité'] || '—'}</td>
                   <td className="num">{integer(ligne['Stock initial'])}</td>
@@ -235,7 +254,7 @@ export default function FicheStockTab() {
           registre papier). Le récapitulatif reprend les chiffres du registre. */}
       {fiche ? (
         <Modal wide
-          title={`Fiche de stock — ${fiche.produit.name} (${libelleMagasin.toLowerCase()})`}
+          title={`Fiche de stock — ${fiche.produit.presentation ? `${fiche.produit.name} — ${fiche.produit.presentation}` : fiche.produit.name} (${libelleMagasin.toLowerCase()})`}   /* 2.7.85 */
           onClose={() => setFiche(null)}
           footer={<>
             <Btn icon={Printer}

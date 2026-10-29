@@ -56,7 +56,11 @@ export const productSchema = z.object({
     .transform(v => (v ? v : null)).optional(),
   categoryId: identifier.nullish().transform(v => v ?? null),
   manufacturer: optionalText.optional(),
-  unit: shortText.default('boîte'),
+  // 2.7.90 — unité VIDE à la création au Catalogue : l'écran Stock l'affiche
+  // vide (demande du dépôt) et la PREMIÈRE réception la fixe automatiquement
+  // (celle saisie à la réception). '' est légale — la colonne est NOT NULL,
+  // ce que la chaîne vide respecte ; 40 = taille de la colonne products.unit.
+  unit: z.string().trim().max(40).default(''),
   minStock: z.number().int().min(0).max(1000000).default(0),
   maxStock: z.number().int().min(0).max(1000000).nullish().transform(v => v ?? null),
   storage: text.optional(),

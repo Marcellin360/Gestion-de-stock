@@ -1,6 +1,6 @@
 // Données du poste de travail (une seule requête pour toute l'interface).
 import { read } from '../utils/transaction.js';
-import { buildData, salesCalendar, salesMonthly, stockCalendar, stockFlowMonthly } from '../services/dashboard.service.js';
+import { buildData, salesCalendar, salesMonthly, stockCalendar, stockFlowMonthly, purchasesMonthly } from '../services/dashboard.service.js';
 
 export async function getData(req, res) {
   const payload = await read(transaction => buildData(
@@ -45,4 +45,12 @@ export async function getStockCalendar(req, res) {
 export async function getStockFlowMonthly(req, res) {
   const lignes = await read(transaction => stockFlowMonthly(transaction));
   res.json({ months: lignes });
+}
+
+// 2.7.101 — achats au coût : réservés aux profils dépôt et administrateur.
+export async function getPurchasesMonthly(req, res) {
+  const role = req.user.role?.code || req.user.roleCode;
+  if (!['DEPOT', 'ADMIN'].includes(role)) return res.status(403).json({ message: 'Accès réservé au dépôt et à l’administrateur.' });
+  const months = await read(transaction => purchasesMonthly(transaction));
+  return res.json({ months });
 }

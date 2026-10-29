@@ -888,3 +888,61 @@ table.data .actes { display: inline-flex; gap: 6px; align-items: center; flex-wr
 
 @media (max-width: 1100px) { .dboard__grille { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 640px) { .dboard__grille, .dboard__grille--magasin { grid-template-columns: 1fr; } }
+
+/* 2.7.103 — maquette claire : cartes blanches, accents pastel et tuiles dégradées. */
+.dboard__grille { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.dboard__groupe { border: 1px solid #dce7f5; border-radius: 12px; padding: 14px; box-shadow: 0 4px 16px rgba(39, 72, 115, .07); }
+.dboard__groupe--bleu { border-color: #a9cdf8; background: linear-gradient(140deg, #fff, #f0f6ff); }
+.dboard__groupe--orange { border-color: #f7d7ae; background: linear-gradient(140deg, #fff, #fff8ed); }
+.dboard__groupe--vert { border-color: #b6e7d0; background: linear-gradient(140deg, #fff, #f1fbf6); }
+.dboard__groupe--rose { border-color: #e2c9f2; background: linear-gradient(140deg, #fff, #faf4ff); }
+.dboard__titre { font-size: .75rem; color: #25446d; margin-bottom: 11px; }
+.dboard__rangee { grid-template-columns: 1fr; }
+.dboard__groupe--bleu .dtuile { background: linear-gradient(135deg, #328df2, #1769da); }
+.dboard__groupe--orange .dtuile, .dboard__groupe--orange .dtuile--sombre { background: linear-gradient(135deg, #ffad3b, #ef7e15); }
+.dboard__groupe--bleu .dtuile--sombre { background: linear-gradient(135deg, #669af1, #3673d5); }
+.dboard__groupe--vert .dtuile { background: linear-gradient(135deg, #29ba77, #12955e); }
+.dboard__groupe--rose .dtuile { background: linear-gradient(135deg, #ad67e6, #8540c3); }
+.dboard__grille--magasin { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.dhisto__title { display: flex; align-items: center; gap: 8px; font-weight: 700; color: #173254; }
+.dhisto__period { display: flex; justify-content: flex-end; gap: 6px; margin-bottom: 8px; }
+.dhisto__period button { border: 1px solid #d7e5f7; background: #f5f8fd; color: #526581; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+.dhisto__period button.dhisto__period-on { color: white; background: #1975e9; border-color: #1975e9; }
+.dhisto__legend { display: flex; flex-wrap: wrap; gap: 16px; color: #526581; font-size: .85rem; }
+.dhisto__legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; }
+.dhisto__scroll { overflow-x: auto; }
+.dhisto__scroll svg { display: block; width: 100%; min-width: 600px; height: auto; }
+.dhisto__note { font-size: .8rem; margin: 8px 0; }
+@media (max-width: 1100px) { .dboard__grille { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .dboard__grille, .dboard__grille--magasin { grid-template-columns: 1fr; } }
+
+/* 2.7.104 — composition proche de la maquette : valeur principale et sous-indicateurs. */
+.dboard__groupe { position: relative; min-height: 182px; padding: 18px 15px 14px 65px; }
+.dboard__groupe .dboard__titre { color: #2563eb; font-size: .72rem; margin: 2px 0 5px; }
+.dboard__groupe--orange .dboard__titre { color: #d97706; }
+.dboard__groupe--vert .dboard__titre { color: #078451; }
+.dboard__groupe--rose .dboard__titre { color: #7e22ce; }
+.dboard__groupe .dboard__rangee { display: flex; flex-wrap: wrap; gap: 0; }
+.dboard__groupe .dtuile { flex: 1 1 90px; min-height: 0; padding: 9px 8px 5px; color: #173254; background: transparent; box-shadow: none; border-radius: 0; }
+.dboard__groupe .dtuile:hover { transform: none; box-shadow: none; }
+.dboard__groupe .dtuile:first-child { flex-basis: 100%; padding: 0 0 14px; }
+.dboard__groupe .dtuile:first-child .dtuile__label { color: #4c668b; font-size: .71rem; }
+.dboard__groupe .dtuile:first-child .dtuile__value { font-size: 1.55rem; }
+.dboard__groupe .dtuile:not(:first-child) { border-top: 1px solid #dce7f5; }
+.dboard__groupe .dtuile__value { font-size: .94rem; text-shadow: none; }
+.dboard__groupe .dtuile__label { padding: 0; opacity: .9; }
+.dboard__groupe .dtuile__hint { opacity: .75; }
+.dboard__groupe .dtuile__icone { display: none; }
+.dboard__groupe .dtuile:first-child .dtuile__icone { display: block; top: 0; left: -50px; right: auto; width: 40px; height: 40px; padding: 10px; color: white; opacity: 1; background: linear-gradient(135deg, #348df5, #0865de); border-radius: 50%; }
+.dboard__groupe--orange .dtuile:first-child .dtuile__icone { background: linear-gradient(135deg, #ffb04d, #f18512); }
+.dboard__groupe--vert .dtuile:first-child .dtuile__icone { background: linear-gradient(135deg, #37ca86, #079658); }
+.dboard__groupe--rose .dtuile:first-child .dtuile__icone { background: linear-gradient(135deg, #b960eb, #8122c8); }
+.dboard__overview { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(240px, .9fr) minmax(190px, .65fr); gap: 14px; align-items: start; }
+.dboard__stores { display: grid; gap: 12px; }
+.dboard__shortcuts { display: grid; gap: 8px; }
+.dboard__shortcuts button { display: flex; align-items: center; gap: 10px; width: 100%; border: 1px solid #e3ebf6; border-radius: 10px; padding: 8px; background: #f9fbff; color: #173254; text-align: left; cursor: pointer; }
+.dboard__shortcuts button:hover { background: #edf5ff; border-color: #b9d4f7; }
+.dboard__shortcuts button > span:nth-child(2) { flex: 1; }
+.dboard__shortcut-icon { display: grid; place-items: center; width: 35px; height: 35px; color: #1975e9; background: #e6f0ff; border-radius: 50%; }
+@media (max-width: 1200px) { .dboard__overview { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 700px) { .dboard__overview { grid-template-columns: 1fr; } }

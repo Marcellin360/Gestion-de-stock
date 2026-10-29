@@ -60,7 +60,7 @@ const PAGES = [
   { route: 'receptions', page: ReceiptsPage, title: 'Réceptions — entrées au dépôt', permission: 'receipt' },
   // 2.7.11 — le menu « Transferts dépôt → pharmacie » s'intitule désormais
   // « Historique de transfert » ; le détail complet reste via « Détail ».
-  { route: 'transferts', page: TransfersPage, title: 'Historique de transfert — dépôt vers pharmacie', permission: 'transfer' },
+  { route: 'transferts', page: TransfersPage, title: 'Transfert vers pharmacie', permission: 'transfer' },
   { route: 'pertes', page: LossesPage, title: 'Pertes et dons', permission: 'loss' },
   // 2.7.15 — menu « Catalogue » rétabli pour ADMINISTRATEUR et DÉPÔT (masqué
   // pour PHARMACIST — son comptoir n'y a pas l'usage), adresses toujours ouvertes.
@@ -128,7 +128,7 @@ function Routing() {
       <Layout>
         <Banner tone="warn" title="Accès non autorisé">
           {target.route === 'documents' && user.roleCode === 'DEPOT'
-            ? 'Le profil dépôt n’a pas d’écran Documents : ses bons (réceptions, transferts) restent consultables depuis les écrans « Réceptions » et « Historique de transfert », et depuis le tableau de bord.'
+            ? 'Le profil dépôt n’a pas d’écran Documents : ses bons (réceptions, transferts) restent consultables depuis les écrans « Réceptions » et « Transfert vers pharmacie », et depuis le tableau de bord.'
             : `Votre profil (${user.roleName}) ne permet pas d’ouvrir cet écran.`}
         </Banner>
       </Layout>

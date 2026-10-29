@@ -25,9 +25,11 @@
 // ============================================================================
 import { printablePage, formatDateTime, formatMoney, escapeHtml } from '../utils/html.js';
 import { table } from './table.js';
+// 2.7.84 — unités de vente libres (chaîne de conditionnement) : ml, cm…
+import { libelleUnite, pluraliseUnite } from '../utils/conditionnement.js';
 
 const UNITES = { BOX: 'boîte', BLISTER: 'plaquette', UNIT: 'comprimé' };
-const pluriel = texte => (/[eéyi]$/.test(texte)) ? `${texte}s` : texte;
+const pluriel = texte => pluraliseUnite(texte, 2);   // 2.7.84 : pluriels généralisés
 const ROLE_LABELS = { DOCTOR: 'Médecin', MIDWIFE: 'Sage-femme' };
 
 const SEJOUR_CSS = `
@@ -84,7 +86,7 @@ function exemplaire({ sejour, patient, pharmacy, user, mention, periode }) {
     {
       label: 'Quantité', align: 'right', render: ligne => {
         const nombre = Number(ligne.saleQuantity);
-        const unite = UNITES[ligne.saleUnit] || UNITES.BOX;
+        const unite = libelleUnite(ligne.saleUnit || 'BOX');   // 2.7.84 : legacy + unités brutes
         const libelle = nombre > 1 ? pluriel(unite) : unite;
         return `${escapeHtml(String(Number.isInteger(nombre) ? nombre : nombre.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')))} ${libelle}`;
       }

@@ -30,7 +30,9 @@
 //   passage du curseur (mouvement demandé).
 import { AlertTriangle, ShoppingCart, PackagePlus, PackageMinus, ArrowRight, ArrowRightLeft, Warehouse, TrendingUp, Package, Pill, Layers, XCircle } from 'lucide-react';
 import SalesHistogram from '../components/SalesHistogram.jsx';
+import DashboardSalesTrend from '../components/DashboardSalesTrend.jsx';
 import DepotFlowChart from '../components/DepotFlowChart.jsx';
+import PurchasesHistogram from '../components/PurchasesHistogram.jsx';
 import { useData } from '../context/DataContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { Badge, Banner, Btn, Card, Empty } from '../components/ui.jsx';
@@ -118,13 +120,6 @@ export default function DashboardPage() {
           </small>
         </div>
         <div className="spacer" />
-        <div className="pill-row">
-          {actions.map(action => (
-            <Btn key={action.route} variant={action.variant || 'default'} icon={action.icon} onClick={() => navigate(action.route)}>
-              {action.label}
-            </Btn>
-          ))}
-        </div>
       </div>
 
       {rouges.length ? (
@@ -184,7 +179,7 @@ export default function DashboardPage() {
               <section className="dboard__groupe dboard__groupe--bleu">
                 <h3 className="dboard__titre">Activité du mois</h3>
                 <div className="dboard__rangee">
-                  <Tuile icone={TrendingUp} label="Ventes du mois" valeur={money(month?.salesMonth || 0)}
+                  <Tuile icone={TrendingUp} label="Chiffre d’affaires du mois" valeur={money(month?.salesMonth || 0)}
                     hint={`${integer(month?.salesMonthCount || 0)} vente(s) validée(s)`} />
                   <Tuile icone={TrendingUp} label="Marge du mois" valeur={money(month?.marginMonth || 0)} hint="Marge brute réalisée" />
                   <Tuile icone={ShoppingCart} label="Panier moyen" valeur={money(panierMoyen(month))} hint="Montant moyen par vente" />
@@ -194,7 +189,7 @@ export default function DashboardPage() {
               <section className="dboard__groupe dboard__groupe--orange">
                 <h3 className="dboard__titre">Activité du jour</h3>
                 <div className="dboard__rangee">
-                  <Tuile icone={TrendingUp} label="Ventes du jour" valeur={money(stats.salesToday)}
+                  <Tuile icone={TrendingUp} label="Chiffre d’affaires du jour" valeur={money(stats.salesToday)}
                     hint={`${integer(stats.salesTodayCount || 0)} vente(s)`} />
                   {stats.marginToday !== undefined
                     ? <Tuile icone={TrendingUp} label="Marge du jour" valeur={money(stats.marginToday)} hint="Marge brute réalisée" />
@@ -226,7 +221,8 @@ export default function DashboardPage() {
       {/* 2.7.19 — la carte du magasin (Pharmacie : alertes, valeur du stock,
           médicaments, ventes du jour) remonte AU-DESSUS du graphique :
           c'est le métier du comptoir, il se lit en premier. */}
-      <div className="grid grid--2" style={{ marginTop: 16, marginBottom: 16 }}>
+      <div className="dboard__overview" style={{ marginTop: 16, marginBottom: 16 }}>
+        <div className="dboard__stores">
         {magasins.map(magasin => (
           <Card key={magasin.code}
             title={<span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -244,7 +240,7 @@ export default function DashboardPage() {
                 valeur={integer(magasin.stats?.activeProducts)}
                 hint="références actives" />
               {magasin.code === 'PHARMACY'
-                ? <Tuile ton="orange" icone={ShoppingCart} label="Ventes du jour"
+                ? <Tuile ton="orange" icone={ShoppingCart} label="Chiffre d’affaires du jour"
                   valeur={money(magasin.stats?.salesToday)}
                   hint={`${integer(magasin.stats?.salesTodayCount || 0)} vente(s)`} />
                 : <Tuile ton="orange" icone={AlertTriangle} label="En rupture"
@@ -253,6 +249,16 @@ export default function DashboardPage() {
             </div>
           </Card>
         ))}
+        </div>
+        {!estDepot ? <DashboardSalesTrend /> : null}
+        <Card title="Raccourcis">
+          <div className="dboard__shortcuts">
+            {actions.map(action => <button type="button" key={action.route} onClick={() => navigate(action.route)}>
+              <span className="dboard__shortcut-icon"><action.icon size={18} /></span>
+              <span>{action.label}</span><ArrowRight size={15} />
+            </button>)}
+          </div>
+        </Card>
       </div>
 
       {/* 2.7.18/2.7.20 — chaque profil a SON graphique mensuel : la courbe des
@@ -263,6 +269,8 @@ export default function DashboardPage() {
         ? <div style={{ marginBottom: 16 }}><SalesHistogram /></div>
         : <div style={{ marginBottom: 16 }}><DepotFlowChart /></div>}
       {estAdmin ? <div style={{ marginBottom: 16 }}><DepotFlowChart /></div> : null}
+
+      {(estDepot || estAdmin) ? <div style={{ marginBottom: 16 }}><PurchasesHistogram /></div> : null}
 
       <div className="grid grid--2">
         {/* 2.7.28 — le dépôt voit aussi les alertes « bientôt épuisé » du

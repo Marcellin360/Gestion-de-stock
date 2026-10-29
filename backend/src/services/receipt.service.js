@@ -5,7 +5,7 @@
 // CMP et du prix de vente. Le passage vers la pharmacie se fait ensuite par
 // un TRANSFERT.
 // ============================================================================
-import { Receipt, ReceiptLine, Lot, Product, Supplier } from '../models/index.js';
+import { Receipt, ReceiptLine, Lot, Product, Supplier, Category } from '../models/index.js';
 import { D, money } from '../utils/money.js';
 import { ensure } from '../utils/errors.js';
 import { today } from '../utils/dates.js';
@@ -16,6 +16,11 @@ import { applyMovements } from './stock.service.js';
 import { recomputeProductCosting } from './pricing.service.js';
 import { getSettings } from './settings.service.js';
 import { log, publicSnapshot } from './audit.service.js';
+import { prochainCodeProduit } from './codes.service.js';
+// 2.7.84 — chaîne de conditionnement : « 1 carton = N boîtes », contenance
+// des flacons (ml), longueur des rouleaux (cm)… saisie à la réception et
+// MÉMORISÉE sur la fiche, re-proposée ensuite.
+import { parserChaine, chaineEffective, chaineCompacte, facteurVers } from '../utils/conditionnement.js';
 
 /** Vérifications de cohérence des dates d'un lot (RG02, §16).
  *  Exportée pour la correction de réception (2.7.34, teboka ③). */
@@ -143,6 +148,191 @@ export async function resoudreLot({ produit, supplierId, location, ligne, transa
 }
 
 /**
+ * 2.7.84 — Résout le produit d'une ligne de réception (PRÉSENTATION PAR
+ * FICHE) : jamais de mélange de présentations (« Alcool médical — Flacon
+ * 100 ml » et « Flacon 250 ml » ont chacune leur stock, leur CMP, leur prix).
+ *
+ *   • productId renseigné        → la fiche existante (verrouillée) ;
+ *   • baseName + presentation    → la fiche du MÊME couple (nom, présentation)
+ *     si elle existe déjà, sinon la fiche est CRÉÉE automatiquement (code
+ *     MED-… attribué par le serveur, marge = taux minimum paramétré) : le
+ *     dépôt n'a plus besoin d'ouvrir le Catalogue avant une première livraison
+ *     d'une nouvelle présentation.
+ *
+ * Si la ligne porte une chaîne de conditionnement (`conversions`) elle est
+ * MÉMORISÉE sur la fiche avec l'unité d'achat (`purchaseUnit`) : la prochaine
+ * réception la re-proposera telle quelle (modifiable à chaque fois).
+ */
+export async function resoudreProduitPresentation(ligne, settings, transaction) {
+  const presentation = String(ligne.presentation || '').trim();
+
+  // 2.7.85 — catégorie choisie À LA RÉCEPTION (remise dans le formulaire),
+  // vérifiée ici une seule fois quelle que soit la voie (productId, couple
+  // existant, adoption ou création). 2.7.97 — PLUS VERROUILLÉE à l'écran
+  // (demande de l'officine) : pré-remplie depuis la fiche, elle reste
+  // MODIFIABLE, et le choix fait à la réception est répercuté sur la fiche
+  // existante ou adoptée — puis posé sur la fiche créée comme avant.
+  let categoryId = null;
+  if (ligne.categoryId) {
+    const categorie = await Category.findByPk(ligne.categoryId, { transaction });
+    ensure(categorie, `Catégorie inconnue (réception « ${ligne.baseName || ''} · ${presentation} »).`, 422);
+    categoryId = categorie.id;
+  }
+  /** 2.7.97 — répercute sur la fiche existante la catégorie choisie à
+   *  l'écran (précédemment le champ était verrouillé dès que la fiche
+   *  existait : tout changement passait par le Catalogue). */
+  const repercuterCategorie = async fiche => {
+    if (categoryId && Number(fiche.categoryId) !== categoryId) {
+      await fiche.update({ categoryId }, { transaction });
+    }
+    return fiche;
+  };
+
+  if (ligne.productId) {
+    const produit = await Product.findByPk(ligne.productId, { transaction, lock: transaction.LOCK.UPDATE });
+    ensure(produit, 'Médicament introuvable.', 404);
+    ensure(produit.active, `Médicament « ${produit.name} » inactif : réception refusée.`);
+    return repercuterCategorie(produit);
+  }
+
+  const baseName = String(ligne.baseName || '').trim();
+  ensure(baseName && presentation, 'Nouvelle présentation : le nom du médicament et sa présentation sont obligatoires.');
+  const gestion = String(ligne.unit || '').trim().toLowerCase();
+  ensure(gestion, 'Nouvelle présentation : l’unité de gestion est obligatoire (boîte, flacon, ml…).');
+
+  const fiches = await Product.findAll({ transaction });
+
+  // Le couple (nom, présentation) existe déjà ? (comparaison insensible à la
+  // casse : « Flacon 250 ML » et « flacon 250 ml » = la même fiche).
+  const existant = fiches
+    .find(p => String(p.name).trim().toLowerCase() === baseName.toLowerCase()
+      && String(p.presentation || '').trim().toLowerCase() === presentation.toLowerCase());
+  if (existant) {
+    ensure(existant.active, `La fiche « ${existant.name} · ${existant.presentation} » est inactive : réception refusée.`);
+    return repercuterCategorie(
+      await Product.findByPk(existant.id, { transaction, lock: transaction.LOCK.UPDATE }));
+  }
+
+  // 2.7.90 — ADOPTION de la fiche créée au CATALOGUE par son SEUL nom
+  // (présentation encore vide : elle ne se saisit plus au Catalogue depuis la
+  // 2.7.89, elle arrive AVEC la première réception). Sans cette adoption, la
+  // réception fabriquait un DOUBLON : la fiche « Paracétamol » du Catalogue
+  // restait à 0 pour toujours pendant qu'une seconde fiche « Paracétamol »
+  // portait le stock. Désormais la présentation saisie (et la catégorie si la
+  // fiche n'en avait pas) est ÉCRITE sur la fiche existante, et c'est ELLE
+  // dont la quantité grandit. La règle 2.7.84 reste entière pour la suite :
+  // une AUTRE présentation du même nom créera sa propre fiche (jamais de
+  // mélange de présentations dans le stock).
+  const ficheSansPresentation = fiches.find(p =>
+    String(p.name).trim().toLowerCase() === baseName.toLowerCase()
+    && !String(p.presentation || '').trim());
+  if (ficheSansPresentation) {
+    ensure(ficheSansPresentation.active,
+      `La fiche « ${ficheSansPresentation.name} » est inactive : réception refusée.`);
+    const adoptee = await Product.findByPk(ficheSansPresentation.id, { transaction, lock: transaction.LOCK.UPDATE });
+    await adoptee.update({
+      presentation,
+      // 2.7.97 — la catégorie choisie à la réception est répercutée même sur
+      // une fiche adoptée déjà catégorisée (le champ n'est plus verrouillé).
+      ...(categoryId ? { categoryId } : {})
+    }, { transaction });
+    return adoptee;
+  }
+
+  // Fiche NOUVELLE : créée au fil de la réception. Prix et CMP partent de 0 —
+  // ils sont calculés juste après les mouvements (recomputeProductCosting).
+  const produit = await Product.create({
+    code: await prochainCodeProduit(transaction),
+    name: baseName,
+    presentation,
+    categoryId,                            // 2.7.85
+    unit: gestion,
+    marginRate: settings.minMargin ?? 20,
+    sellingPrice: 0, cmp: 0,
+    // Le détail 2.7.12 (boîte/plaquette/comprimé par défaut 10/10) est coupé :
+    // c'est la chaîne `packaging` qui gouverne désormais ce produit.
+    blistersPerBox: 0, unitsPerBlister: 0, pricePerBlister: 0, pricePerUnit: 0,
+    packaging: chaineCompacte(ligne.conversions || []),
+    purchaseUnit: String(ligne.purchaseUnit || '').trim().toLowerCase()
+  }, { transaction });
+  return produit;
+}
+
+/**
+ * 2.7.84 — Convertit la ligne de réception (quantité et prix en UNITÉ
+ * D'ACHAT, ex. 2 cartons à 80 000 Ar) en UNITÉ DE GESTION du stock (200
+ * boîtes à 400 Ar), en suivant la chaîne de conditionnement. La chaîne
+ * éventuellement ajustée à l'écran est mémorisée sur la fiche.
+ * Sans unité d'achat distincte : comportement historique (quantité directe).
+ */
+export async function convertirLigneEnGestion(ligne, produit, transaction) {
+  // Mémorisation de la chaîne ajustée à l'écran (aucune ou changée).
+  const conversionsVues = parserChaine(ligne.conversions || []);
+  if (conversionsVues.length) {
+    const actuelle = chaineCompacte(chaineEffective(produit));
+    const nouvelle = chaineCompacte(conversionsVues);
+    if (nouvelle !== actuelle || String(produit.purchaseUnit || '') !== String(ligne.purchaseUnit || '').trim().toLowerCase()) {
+      await produit.update({
+        packaging: nouvelle,
+        purchaseUnit: String(ligne.purchaseUnit || '').trim().toLowerCase()
+      }, { transaction });
+    }
+  }
+
+  const achat = String(ligne.purchaseUnit || '').trim().toLowerCase();
+  const demandee = String(ligne.unit || '').trim().toLowerCase();
+  // 2.7.90 — fiche du CATALOGUE sans unité ('' tant qu'aucune réception) :
+  // l'unité demandée à CETTE réception sert immédiatement d'unité de gestion.
+  // 2.7.97 — PLUS DE VERROUILLAGE à l'écran (demande de l'officine) : l'unité
+  // de gestion est pré-remplie depuis la fiche mais reste CHANGEABLE à chaque
+  // réception, et le choix est répercuté sur la fiche. Le garde-fou est la
+  // COHÉRENCE avec la chaîne de conditionnement ci-dessous — plus le refus
+  // plat d'autrefois (« l'unité ne se change plus »).
+  const existante = String(produit.unit || '').trim().toLowerCase();
+  const gestion = demandee || existante;
+
+  // 2.7.97 — garde-fou du CHANGEMENT d'unité sur fiche déjà réglée : si une
+  // chaîne de conditionnement existe (celle ajustée dans la ligne en priorité,
+  // sinon celle mémorisée sur la fiche), la nouvelle unité doit y FIGURER —
+  // sinon les ventes au détail ne sauraient plus convertir et la fiche serait
+  // incohérente ; le message guide vers l'ajustement du conditionnement.
+  if (demandee && existante && demandee !== existante) {
+    const chaineReference = conversionsVues.length
+      ? conversionsVues
+      : parserChaine(produit.packaging || '');
+    ensure(!chaineReference.length
+        || chaineReference.some(m => m.from.toLowerCase() === demandee || m.to.toLowerCase() === demandee),
+      `« ${produit.name} » se gère en « ${existante} » et son conditionnement est déjà réglé : pour passer à `
+      + `« ${demandee} », ajustez d'abord les niveaux du conditionnement dans la ligne afin d'y atteindre `
+      + `« ${demandee} » (la chaîne doit contenir la nouvelle unité).`);
+  }
+
+  if (!achat || achat === gestion) {
+    // Pas de conversion d'achat : la ligne arrive directement dans l'unité de
+    // gestion choisie — 2.7.31, reportée sur la fiche (étendu 2.7.97 : même
+    // pour une fiche à chaîne, le garde-fou ci-dessus ayant validé le choix).
+    return { ...ligne, unit: gestion };
+  }
+  // 2.7.97 — avec conversion d'achat, la chaîne doit atteindre l'unité
+  // CHOISIE à l'écran (et non plus seulement celle de la fiche).
+  const chaine = chaineEffective(produit);
+  const facteur = facteurVers(chaine, achat, gestion);
+  ensure(facteur && facteur >= 1,
+    `« ${produit.name} »${produit.presentation ? ` · ${produit.presentation}` : ''} : combien de « ${gestion} » `
+    + `contient 1 « ${achat} » ? Renseignez la conversion dans la ligne (ex. 1 carton = N ${gestion}s) `
+    + 'avant de valider la réception.');
+  return {
+    ...ligne,
+    unit: gestion,
+    // Quantité en unité de gestion = quantité achetée × facteur (6 décimales).
+    quantity: Number(D(ligne.quantity).mul(facteur).toFixed(6)),
+    // Prix d'achat par unité de gestion = prix par unité d'achat ÷ facteur :
+    // le CMP et le prix de vente restent calculés dans l'unité du stock.
+    purchasePrice: money(D(ligne.purchasePrice).div(facteur).toFixed(6))
+  };
+}
+
+/**
  * Enregistre une réception.
  * L'idempotence vient de requestKey : un double clic ou un réseau instable
  * ne peut pas créer deux réceptions ni doubler le stock.
@@ -159,13 +349,29 @@ export async function createReceipt(payload, user, transaction) {
   // Toute réception alimente le dépôt : la pharmacie est réapprovisionnée par transfert.
   const location = 'DEPOT';
 
+  // 2.7.84 — PASSE 1 : chaque ligne est d'abord RÉSOLUE —
+  //   • fiche existante (productId ou couple nom + présentation) : complétée ;
+  //   • couple (nom de base, présentation) NOUVEAU : la fiche est CRÉÉE
+  //     automatiquement au fil de la réception (« Flacon 250 ml » ≠ « Flacon
+  //     100 ml » : jamais mélangées dans le stock) —
+  // puis CONVERTIE de l'unité d'ACHAT (« 2 cartons à 80 000 Ar ») vers
+  // l'unité de GESTION du stock (« 200 boîtes à 400 Ar ») via la chaîne de
+  // conditionnement (mémorisée sur la fiche pour la prochaine fois).
+  const produitsResolus = new Map();
+  const lignesGestion = [];
+  for (const ligneBrute of payload.lines) {
+    const produit = await resoudreProduitPresentation(ligneBrute, settings, transaction);
+    const ligne = await convertirLigneEnGestion(
+      { ...ligneBrute, number: normalizeLotNumber(ligneBrute.number) }, produit, transaction);
+    ligne.productId = produit.id;   // la clé du lot « produit|numéro » est résolue
+    produitsResolus.set(`${produit.id}|${ligne.number}`, produit);
+    lignesGestion.push(ligne);
+  }
+
   // 2.7.47 — frais AUTOMATIQUES (paramètre « feesRate », 10 % du PA par
   // défaut). Le champ manuel « fees » de l'ancienne interface est accepté
   // mais ignoré : il n'entre plus dans le coût.
-  const lines = appliquerFraisAchat(
-    payload.lines.map(line => ({ ...line, number: normalizeLotNumber(line.number) })),
-    settings.feesRate
-  );
+  const lines = appliquerFraisAchat(lignesGestion, settings.feesRate);
   lines.forEach(validateDates);
   ensure(new Set(lines.map(l => `${l.productId}|${l.number}`)).size === lines.length,
     'Le même numéro de lot apparaît deux fois pour le même médicament dans cette réception.');
@@ -192,7 +398,8 @@ export async function createReceipt(payload, user, transaction) {
   let costTotal = D(0);
 
   for (const line of lines) {
-    const product = await Product.findByPk(line.productId, { transaction, lock: transaction.LOCK.UPDATE });
+    // 2.7.84 — la fiche a été résolue (et verrouillée) dans la passe 1.
+    const product = produitsResolus.get(`${line.productId}|${line.number}`);
     ensure(product, `Médicament introuvable (ligne ${line.number}).`, 404);
     ensure(product.active, `Médicament « ${product.name} » inactif : réception refusée.`);
 
@@ -200,6 +407,13 @@ export async function createReceipt(payload, user, transaction) {
     // mais À LA RÉCEPTION (boîte, flacon, pièce, plaquette…, choix dépôt) ; elle
     // est REPORTÉE sur la fiche — l'unité reste unique par médicament, pour que
     // stock, CMP et prix restent cohérents d'une réception à l'autre.
+    // 2.7.90 — une fiche SANS unité (créée au Catalogue, jamais réceptionnée)
+    // la reçoit de sa première réception.
+    // 2.7.97 — le champ n'est plus verrouillé à l'écran : le choix fait à la
+    // réception est répercuté sur la fiche. La cohérence avec la chaîne de
+    // conditionnement a déjà été garantie par convertirLigneEnGestion (la
+    // chaîne connaît la nouvelle unité, ou refus guidé) — sans chaîne, le
+    // comportement historique 2.7.31 reste inchangé.
     if (line.unit && line.unit !== product.unit) {
       await product.update({ unit: line.unit }, { transaction });
     }
